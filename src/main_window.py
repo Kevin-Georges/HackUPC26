@@ -13,8 +13,9 @@ from model_viewer import ModelViewer, build_color_map
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
 
-_CSV_PATH = pathlib.Path(__file__).parent.parent / "simulation_log.csv"
+_CSV_DIR = pathlib.Path(__file__).parent.parent
 _CSV_HEADER = [
+    "run_id",
     "day",
     "temperature_c",
     "humidity_index",
@@ -80,9 +81,11 @@ class MainWindow(QMainWindow):
         charts.reset_requested.connect(health.reset)
         charts.reset_requested.connect(self._open_csv)
         health.component_failed.connect(self._on_component_failed)
+        viewer.component_selected.connect(health.highlight)
 
         self._csv_file   = None
         self._csv_writer = None
+        self._run_id     = 0
         self._open_csv()
 
         rw = QWidget()
@@ -92,7 +95,9 @@ class MainWindow(QMainWindow):
     def _open_csv(self) -> None:
         if self._csv_file:
             self._csv_file.close()
-        self._csv_file   = open(_CSV_PATH, "w", newline="", encoding="utf-8")
+        self._run_id += 1
+        path = _CSV_DIR / f"simulation_log_run{self._run_id}.csv"
+        self._csv_file   = open(path, "w", newline="", encoding="utf-8")
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(_CSV_HEADER)
         self._csv_file.flush()
@@ -114,6 +119,7 @@ class MainWindow(QMainWindow):
 
         h = {name: pct for name, pct in self._health._ROWS}
         self._csv_writer.writerow([
+            self._run_id,
             self._health._day,
             f"{snap.temperature_stress:.4f}",
             f"{snap.humidity_contamination:.4f}",

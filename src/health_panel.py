@@ -3,7 +3,7 @@ from collections import deque
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QGridLayout, QWidget, QSizePolicy
 from PyQt5.QtGui import QFont, QPainter, QColor, QFontMetrics
 from PyQt5.QtCore import Qt, pyqtSignal
-from constants import GREEN, YELLOW, RED, TEXT, DIM
+from constants import GREEN, YELLOW, ORANGE, RED, TEXT, DIM
 from degradation_engine import DegradationEngine
 
 _N_CELLS  = 90   # number of discrete time cells in each bar
@@ -11,16 +11,19 @@ _CELL_GAP = 1    # px gap between cells
 
 _COLOR_HEALTHY   = QColor(GREEN)
 _COLOR_DEGRADED  = QColor(YELLOW)
-_COLOR_CRITICAL  = QColor(RED)
+_COLOR_CRITICAL  = QColor(ORANGE)
+_COLOR_FAILED    = QColor(RED)
 _COLOR_NOW_LINE  = QColor(TEXT)
 
 
 def _health_to_qcolor(pct: int) -> QColor:
     if pct >= 70:
         return _COLOR_HEALTHY
-    if pct >= 30:
+    if pct >= 50:
         return _COLOR_DEGRADED
-    return _COLOR_CRITICAL
+    if pct >= 30:
+        return _COLOR_CRITICAL
+    return _COLOR_FAILED
 
 
 class HealthBarWidget(QWidget):
@@ -97,12 +100,14 @@ def _pct_to_status(pct_str: str) -> str:
     try:
         value = int(pct_str.rstrip("%"))
     except ValueError:
-        return "Not Working"
+        return "Failed"
     if value > 70:
-        return "Fully Functional"
-    if value > 30:
+        return "Functional"
+    if value > 50:
         return "Degraded"
-    return "Not Working"
+    if value > 30:
+        return "Critical"
+    return "Failed"
 
 
 def _health_color(pct_str: str) -> str:
@@ -112,8 +117,10 @@ def _health_color(pct_str: str) -> str:
         return RED
     if value > 70:
         return GREEN
-    if value > 30:
+    if value > 50:
         return YELLOW
+    if value > 30:
+        return ORANGE
     return RED
 
 
@@ -151,6 +158,7 @@ class HealthPanel(QFrame):
 
         self._status_labels: list[QLabel] = []
         self._health_bars: list[HealthBarWidget] = []
+        self._name_labels: list[QLabel] = []
 
         for row, (name, pct) in enumerate(self._ROWS, 1):
             color  = _health_color(pct)
@@ -160,6 +168,7 @@ class HealthPanel(QFrame):
             name_lbl.setFont(QFont("Segoe UI", 8))
             name_lbl.setStyleSheet(f"color:{TEXT}; border:none;")
             self._grid.addWidget(name_lbl, row, 0)
+            self._name_labels.append(name_lbl)
 
             status_lbl = QLabel(status)
             status_lbl.setFont(QFont("Segoe UI", 8))
@@ -174,6 +183,17 @@ class HealthPanel(QFrame):
 
         lay.addLayout(self._grid)
 
+    def highlight(self, label: str) -> None:
+        """Highlight the row matching *label*; clear all others."""
+        for i, (name, _) in enumerate(self._ROWS):
+            if name == label:
+                self._name_labels[i].setStyleSheet(
+                    f"color:{TEXT}; border:none; background: rgba(100,160,255,45);"
+                    f" border-radius:3px; padding-left:2px;"
+                )
+            else:
+                self._name_labels[i].setStyleSheet(f"color:{TEXT}; border:none;")
+
     def reset(self) -> None:
         self._engine = DegradationEngine()
         self._day = 0
@@ -182,6 +202,7 @@ class HealthPanel(QFrame):
         components = self._engine.tick(21.0, 0.0, 0.0)
         self._ROWS = [(c.name, c.pct_str) for c in components]
         for i, (_, pct) in enumerate(self._ROWS):
+            self._name_labels[i].setStyleSheet(f"color:{TEXT}; border:none;")
             self._status_labels[i].setText(_pct_to_status(pct))
             self._status_labels[i].setStyleSheet(
                 f"color:{_health_color(pct)}; font-weight:bold; border:none;"
