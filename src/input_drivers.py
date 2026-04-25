@@ -2,12 +2,15 @@
 """
 Input Driver module — HP Metal Jet S100 Digital Twin (Phase 1)
 
-Implements the four Environmental & Operational Vectors from the spec (§1.5.1):
+Implements seven Environmental & Operational Vectors:
 
-    temperature_stress      — ambient / build-chamber temperature (°C)
-    humidity_contamination  — combined humidity + powder purity index (0–1)
-    operational_load        — cumulative print cycles since commissioning
-    maintenance_level       — service quality coefficient (0–1)
+    temperature_stress        — ambient / build-chamber temperature (°C)
+    humidity_contamination    — combined humidity + powder purity index (0–1)
+    operational_load          — cumulative print cycles since commissioning
+    maintenance_level         — service quality coefficient (0–1)
+    powder_quality            — feedstock quality index (0–1, 1 = fresh)
+    binder_viscosity_stress   — binder age / viscosity stress index (0–1)
+    voltage_stress            — power-supply instability index (0–1)
 
 Determinism guarantee: given the same `seed` and the same sequence of
 `step()` calls, every driver produces the same output every time.
@@ -23,7 +26,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class DriverSnapshot:
-    """Immutable snapshot of all four input drivers at one simulation timestep.
+    """Immutable snapshot of all seven input drivers at one simulation day.
 
     This is the single object passed into the degradation engine each tick.
 
@@ -33,18 +36,27 @@ class DriverSnapshot:
     humidity_contamination  : float  — 0–1. 0 = perfectly clean/dry; 1 = max contamination.
     operational_load        : float  — cumulative print cycles (monotonically increasing).
     maintenance_level       : float  — 0–1. 1 = fully serviced; 0 = completely neglected.
+    powder_quality          : float  — 0–1. 1 = fresh powder; 0 = fully recycled/degraded.
+    binder_viscosity_stress : float  — 0–1. 0 = optimal viscosity; 1 = max stress.
+    voltage_stress          : float  — 0–1. 0 = stable supply; 1 = max fluctuation.
     """
-    temperature_stress:     float
-    humidity_contamination: float
-    operational_load:       float
-    maintenance_level:      float
+    temperature_stress:       float
+    humidity_contamination:   float
+    operational_load:         float
+    maintenance_level:        float
+    powder_quality:           float
+    binder_viscosity_stress:  float
+    voltage_stress:           float
 
     def __str__(self) -> str:
         return (
             f"T={self.temperature_stress:5.1f}°C  "
             f"contam={self.humidity_contamination:.3f}  "
             f"load={self.operational_load:7.1f} cyc  "
-            f"maint={self.maintenance_level:.3f}"
+            f"maint={self.maintenance_level:.3f}  "
+            f"powder={self.powder_quality:.3f}  "
+            f"binder={self.binder_viscosity_stress:.3f}  "
+            f"volt={self.voltage_stress:.3f}"
         )
 
 
@@ -177,7 +189,7 @@ class OperationalLoadDriver:
         """
         Parameters
         ----------
-        work_rate : starting rate (cycles per step). The rate then drifts via a
+        work_rate : starting rate (cycles per day). The rate then drifts via a
                     bounded random walk so the chart shows realistic busy/idle variation.
         seed      : RNG seed for the pre-generated rate series.
         """
@@ -191,14 +203,14 @@ class OperationalLoadDriver:
         self._idx        = 0
 
     def step(self, dt: float = 1.0) -> float:
-        """Advance by *dt* time units and return the cumulative cycle count."""
+        """Advance by *dt* days and return the cumulative cycle count."""
         self._cumulative += self._rates[self._idx % self._PREGENERATE] * dt
         self._idx += 1
         return self._cumulative
 
     @property
     def current_rate(self) -> float:
-        """Instantaneous work rate at the last completed step (cycles / step)."""
+        """Instantaneous work rate at the last completed day (cycles / day)."""
         return float(self._rates[(self._idx - 1) % self._PREGENERATE])
 
     @property
@@ -239,7 +251,7 @@ class MaintenanceLevelDriver:
         self,
         initial_level:    float = 0.95,
         decay_rate:       float = 2.5e-4,   # fraction lost per timestep
-        service_interval: float = 500.0,    # timesteps between services
+        service_interval: float = 500.0,    # days between services
         service_restore:  float = 0.85,     # fraction of gap to 1.0 restored on service
         noise_std:        float = 0.005,
         seed:             int   = 2,
@@ -276,16 +288,176 @@ class MaintenanceLevelDriver:
         return float(np.clip(self._level, 0.0, 1.0))
 
 
+class PowderQualityDriver:
+    """Feedstock powder quality index (0–1, 1 = fresh, 0 = fully recycled/degraded).
+
+    Physics rationale
+    -----------------
+    Metal powder is recycled between builds.  Each cycle slightly degrades the
+    particle-size distribution and increases oxide contamination on the surface:
+      • Irregular particles → higher blade contact force → faster Archard wear
+      • Oxidised surfaces   → weaker binder adhesion → increased nozzle strain
+
+    Model
+    -----
+    Quality decays proportionally to print cycles (recycling degrades the powder)
+    and recovers proportionally to maintenance level (fresh powder injection during
+    scheduled service).  A Gaussian noise term models batch-to-batch variability.
+    """
+
+    GOOD     = 0.80
+    ADEQUATE = 0.60
+    POOR     = 0.40
+
+    def __init__(
+        self,
+        initial_quality:  float = 0.95,
+        degrade_per_cycle: float = 3.0e-4,  # quality lost per print cycle
+        restore_rate:     float = 3.0e-3,   # fraction of quality gap restored per maintenance unit
+        noise_std:        float = 0.004,
+        seed:             int   = 4,
+    ):
+        self._quality    = float(np.clip(initial_quality, 0.0, 1.0))
+        self._degrade    = degrade_per_cycle
+        self._restore    = restore_rate
+        self._noise_std  = noise_std
+        self._rng        = np.random.default_rng(seed)
+        self._prev_load  = 0.0
+
+    def step(self, operational_load: float, maintenance_level: float) -> float:
+        """Return powder quality index (0–1)."""
+        delta_cycles     = max(0.0, operational_load - self._prev_load)
+        self._prev_load  = operational_load
+
+        self._quality -= self._degrade * delta_cycles
+        self._quality += self._restore * maintenance_level * (1.0 - self._quality)
+        self._quality += float(self._rng.normal(0.0, self._noise_std))
+        self._quality  = float(np.clip(self._quality, 0.0, 1.0))
+        return self._quality
+
+
+class BinderViscosityDriver:
+    """Binder age / viscosity stress index (0–1, 0 = optimal, 1 = max stress).
+
+    Physics rationale
+    -----------------
+    The liquid binder thickens progressively as it ages (solvent evaporation,
+    polymerisation).  Viscosity too high or too low impairs jetting:
+      • High viscosity → increased firing pressure → thermal fatigue on nozzle plate
+      • Cold temperatures amplify this because viscosity rises sharply with cooling
+
+    Model
+    -----
+    A slowly accumulating base stress (ageing) with a temperature-dependent
+    transient offset.  Maintenance resets the base by replacing the cartridge.
+    The returned value includes both the accumulated base and the transient
+    temperature term so the degradation engine sees the full instantaneous stress.
+    """
+
+    NOMINAL  = 0.10
+    WARNING  = 0.35
+    CRITICAL = 0.60
+
+    _OPTIMAL_TEMP_LOW  = 18.0
+    _OPTIMAL_TEMP_HIGH = 25.0
+
+    def __init__(
+        self,
+        baseline:         float = 0.05,
+        age_per_cycle:    float = 6.0e-4,   # stress added per print cycle
+        clean_rate:       float = 4.0e-4,   # stress removed per maintenance unit per day
+        temp_cold_k:      float = 0.020,    # extra stress per °C below optimal (cold thickens)
+        temp_hot_k:       float = 0.008,    # extra stress per °C above optimal (hot thins → spray issues)
+        noise_std:        float = 0.005,
+        seed:             int   = 5,
+    ):
+        self._stress      = baseline
+        self._age         = age_per_cycle
+        self._clean       = clean_rate
+        self._temp_cold_k = temp_cold_k
+        self._temp_hot_k  = temp_hot_k
+        self._noise_std   = noise_std
+        self._rng         = np.random.default_rng(seed)
+        self._prev_load   = 0.0
+
+    def step(self, temperature: float, operational_load: float, maintenance_level: float) -> float:
+        """Return binder viscosity stress index (0–1)."""
+        delta_cycles    = max(0.0, operational_load - self._prev_load)
+        self._prev_load = operational_load
+
+        self._stress += self._age * delta_cycles
+        self._stress -= self._clean * maintenance_level
+        self._stress += float(self._rng.normal(0.0, self._noise_std))
+        self._stress  = float(np.clip(self._stress, 0.0, 1.0))
+
+        cold_excess = max(0.0, self._OPTIMAL_TEMP_LOW  - temperature)
+        hot_excess  = max(0.0, temperature - self._OPTIMAL_TEMP_HIGH)
+        temp_offset = self._temp_cold_k * cold_excess + self._temp_hot_k * hot_excess
+
+        return float(np.clip(self._stress + temp_offset, 0.0, 1.0))
+
+
+class VoltageFluctuationDriver:
+    """Power-supply instability index (0–1, 0 = stable, 1 = max fluctuation).
+
+    Physics rationale
+    -----------------
+    Voltage spikes and sags cause transient Joule heating in the heating elements,
+    accelerating electromigration and oxide-layer growth — the primary mechanisms
+    modelled by the Arrhenius degradation equation.  Sustained instability also
+    stresses the nozzle-plate firing circuitry.
+
+    Model
+    -----
+    A mean-reverting random walk around a low baseline, with rare large spikes
+    drawn from an exponential distribution to model grid transients or brownout
+    events.  No dependency on maintenance (power supply is an external factor).
+    """
+
+    STABLE   = 0.05
+    WARNING  = 0.30
+    CRITICAL = 0.60
+
+    def __init__(
+        self,
+        baseline:    float = 0.05,
+        revert_rate: float = 0.12,   # fraction per day to pull back toward baseline
+        noise_std:   float = 0.015,
+        spike_prob:  float = 0.02,   # probability of a spike each day
+        spike_scale: float = 0.35,   # exponential scale of spike magnitude
+        seed:        int   = 6,
+    ):
+        self._stress      = baseline
+        self._baseline    = baseline
+        self._revert      = revert_rate
+        self._noise_std   = noise_std
+        self._spike_prob  = spike_prob
+        self._spike_scale = spike_scale
+        self._rng         = np.random.default_rng(seed)
+
+    def step(self) -> float:
+        """Return voltage stress index (0–1)."""
+        self._stress += self._revert * (self._baseline - self._stress)
+        if self._rng.random() < self._spike_prob:
+            self._stress += float(self._rng.exponential(self._spike_scale))
+        self._stress += float(self._rng.normal(0.0, self._noise_std))
+        self._stress  = float(np.clip(self._stress, 0.0, 1.0))
+        return self._stress
+
+
 # ── Aggregate suite ───────────────────────────────────────────────────────────
 
 class DriverSuite:
-    """Coordinates all four drivers and emits a DriverSnapshot each tick.
+    """Coordinates all seven drivers and emits a DriverSnapshot each tick.
 
-    The evaluation order inside `step()` resolves inter-driver dependencies:
-      1. OperationalLoad  — no dependencies
-      2. MaintenanceLevel — no dependencies
-      3. Temperature      — no dependencies
-      4. Contamination    — depends on load + maintenance
+    Evaluation order inside `step()` resolves inter-driver dependencies:
+      1. OperationalLoad       — no dependencies
+      2. MaintenanceLevel      — no dependencies
+      3. Temperature           — no dependencies
+      4. Contamination         — depends on load + maintenance
+      5. PowderQuality         — depends on load + maintenance
+      6. BinderViscosity       — depends on temperature + load + maintenance
+      7. VoltageFluctuation    — no dependencies
 
     Usage
     -----
@@ -294,7 +466,7 @@ class DriverSuite:
         suite = DriverSuite(seed=42)
         for t in range(2000):
             snap = suite.step(t)
-            engine.update(snap)         # pass to Phase 1 degradation engine
+            engine.tick(snap)           # pass to Phase 1 degradation engine
     """
 
     def __init__(
@@ -314,6 +486,9 @@ class DriverSuite:
             service_interval=service_interval,
             seed=seed + 2,
         )
+        self.powder_quality   = PowderQualityDriver(seed=seed + 4)
+        self.binder_viscosity = BinderViscosityDriver(seed=seed + 5)
+        self.voltage          = VoltageFluctuationDriver(seed=seed + 6)
         self._t = 0.0
 
     def tick(self, dt: float = 1.0) -> DriverSnapshot:
@@ -331,19 +506,25 @@ class DriverSuite:
 
         Parameters
         ----------
-        t  : current simulation time (seconds or cycles — must be consistent)
+        t  : current simulation time in days
         dt : elapsed time since last step (default 1.0)
         """
         op_load = self.load.step(dt)
         maint   = self.maintenance.step(t)
         temp    = self.temperature.step(t)
         contam  = self.contamination.step(op_load, maint)
+        powder  = self.powder_quality.step(op_load, maint)
+        binder  = self.binder_viscosity.step(temp, op_load, maint)
+        voltage = self.voltage.step()
 
         return DriverSnapshot(
             temperature_stress=temp,
             humidity_contamination=contam,
             operational_load=op_load,
             maintenance_level=maint,
+            powder_quality=powder,
+            binder_viscosity_stress=binder,
+            voltage_stress=voltage,
         )
 
 

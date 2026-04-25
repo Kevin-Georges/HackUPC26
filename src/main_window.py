@@ -65,5 +65,8 @@ class MainWindow(QMainWindow):
             snap.temperature_stress,
             snap.humidity_contamination,
             snap.operational_load,
+            snap.powder_quality,
+            snap.binder_viscosity_stress,
+            snap.voltage_stress,
         )
         self._viewer.set_component_colors(build_color_map(self._health._ROWS))
