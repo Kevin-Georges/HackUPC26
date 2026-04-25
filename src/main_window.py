@@ -1,3 +1,6 @@
+import csv
+import pathlib
+
 from PyQt5.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -9,6 +12,20 @@ from constants import BG, PANEL, BORDER, TEXT
 from model_viewer import ModelViewer, build_color_map
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
+
+_CSV_PATH = pathlib.Path(__file__).parent.parent / "simulation_log.csv"
+_CSV_HEADER = [
+    "day",
+    "temperature_c",
+    "humidity_index",
+    "operational_load",
+    "powder_quality",
+    "binder_viscosity_stress",
+    "voltage_stress",
+    "recoater_blade_pct",
+    "nozzle_plate_pct",
+    "heating_elements_pct",
+]
 
 
 class MainWindow(QMainWindow):
@@ -57,11 +74,24 @@ class MainWindow(QMainWindow):
         self._charts = charts
         charts.snapshot_ready.connect(self._on_snap)
         charts.reset_requested.connect(health.reset)
+        charts.reset_requested.connect(self._open_csv)
         health.component_failed.connect(self._on_component_failed)
+
+        self._csv_file   = None
+        self._csv_writer = None
+        self._open_csv()
 
         rw = QWidget()
         rw.setLayout(right)
         root.addWidget(rw, stretch=2)
+
+    def _open_csv(self) -> None:
+        if self._csv_file:
+            self._csv_file.close()
+        self._csv_file   = open(_CSV_PATH, "w", newline="", encoding="utf-8")
+        self._csv_writer = csv.writer(self._csv_file)
+        self._csv_writer.writerow(_CSV_HEADER)
+        self._csv_file.flush()
 
     def _on_component_failed(self, name: str) -> None:
         self._charts.pause()
@@ -76,3 +106,23 @@ class MainWindow(QMainWindow):
             snap.voltage_stress,
         )
         self._viewer.set_component_colors(build_color_map(self._health._ROWS))
+
+        health_by_name = {name: pct for name, pct in self._health._ROWS}
+        self._csv_writer.writerow([
+            self._health._day,
+            f"{snap.temperature_stress:.4f}",
+            f"{snap.humidity_contamination:.4f}",
+            f"{snap.operational_load:.4f}",
+            f"{snap.powder_quality:.4f}",
+            f"{snap.binder_viscosity_stress:.4f}",
+            f"{snap.voltage_stress:.4f}",
+            health_by_name.get("Recoater Blade",    ""),
+            health_by_name.get("Nozzle Plate",      ""),
+            health_by_name.get("Heating Elements",  ""),
+        ])
+        self._csv_file.flush()
+
+    def closeEvent(self, event) -> None:
+        if self._csv_file:
+            self._csv_file.close()
+        super().closeEvent(event)
