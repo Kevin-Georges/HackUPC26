@@ -18,7 +18,7 @@ def main():
     app.setStyle("Fusion")
 
     here = os.path.dirname(os.path.abspath(__file__))
-    model = os.path.join(here, "../assets/Proper HP Printer.glb")
+    model = os.path.join(here, "../assets/Proper HP Printer All Components.glb")
     win = MainWindow(model)
     win.show()
     sys.exit(app.exec_())
