@@ -2,7 +2,7 @@ import colorsys
 import warnings
 import numpy as np
 from PyQt5.QtWidgets import QOpenGLWidget
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from OpenGL.GL import *  # noqa: F401,F403
 from OpenGL.GLU import gluPerspective
 import trimesh
@@ -85,6 +85,16 @@ class ModelViewer(QOpenGLWidget):
         self._prog = 0
         self._component_colors: dict[str, tuple[float, float, float]] = {}
         self.setMinimumSize(400, 400)
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)
+        self._anim_timer.timeout.connect(self._auto_rotate_step)
+
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(2000)
+        self._idle_timer.timeout.connect(self._anim_timer.start)
+        self._idle_timer.start()
 
     def set_component_colors(self, colors: dict[str, tuple[float, float, float]]):
         self._component_colors = colors
@@ -232,12 +242,22 @@ class ModelViewer(QOpenGLWidget):
 
     # ── Input ─────────────────────────────────────────────────────────────────
 
+    def _reset_idle(self) -> None:
+        self._anim_timer.stop()
+        self._idle_timer.start(2000)
+
+    def _auto_rotate_step(self) -> None:
+        self.rot_y += 0.3
+        self.update()
+
     def mousePressEvent(self, e):
+        self._reset_idle()
         self._last = e.pos()
 
     def mouseMoveEvent(self, e):
         if self._last is None:
             return
+        self._reset_idle()
         dx = e.x() - self._last.x()
         dy = e.y() - self._last.y()
         if e.buttons() & Qt.LeftButton:
@@ -250,7 +270,9 @@ class ModelViewer(QOpenGLWidget):
 
     def mouseReleaseEvent(self, e):
         self._last = None
+        self._reset_idle()
 
     def wheelEvent(self, e):
+        self._reset_idle()
         self._dist = max(1.5, min(20.0, self._dist - e.angleDelta().y() / 240.0))
         self.update()
