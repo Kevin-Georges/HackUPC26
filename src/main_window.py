@@ -4,10 +4,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QFrame,
-    QLabel,
 )
-from PyQt5.QtCore import Qt
-from constants import BG, PANEL, BORDER, TEXT, DIM
+from constants import BG, PANEL, BORDER, TEXT
 from model_viewer import ModelViewer
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
@@ -32,17 +30,8 @@ class MainWindow(QMainWindow):
             f"background:{PANEL}; border:1px solid {BORDER}; border-radius:5px;"
         )
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(4, 4, 4, 4)
-        ll.setSpacing(4)
-
-        tip = QLabel(
-            "Left-drag · rotate X/Y     Right-drag · rotate Z     Scroll · zoom"
-        )
-        tip.setAlignment(Qt.AlignCenter)
-        tip.setStyleSheet(
-            f"color:{DIM}; font-size:8pt; background:transparent; border:none;"
-        )
-        ll.addWidget(tip)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(0)
         ll.addWidget(ModelViewer(model_path))
         root.addWidget(left, stretch=3)
 
