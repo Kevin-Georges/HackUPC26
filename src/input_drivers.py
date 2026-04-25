@@ -74,38 +74,42 @@ class TemperatureStressDriver:
 
     Model
     -----
-    A bounded random walk pre-generated at initialisation time.
-    Each step moves by a small random delta, clamped so the value
-    never leaves [set_point - amplitude, set_point + amplitude].
-    The full series is stored in an array; step(t) just indexes into it,
-    so the chart always reads from fixed data rather than sampling live.
+    Ornstein-Uhlenbeck (mean-reverting) process pre-generated at startup.
+    dT = θ(μ - T)dt + σ dW
+    where θ is the reversion speed, μ is the set-point, and σ is volatility.
+    Rare thermal shock events (Poisson arrivals) add sudden temperature jumps
+    that decay back toward the mean — modelling door openings, heater faults, etc.
     """
 
-    OPTIMAL_LOW  = 18.0   # °C
-    OPTIMAL_HIGH = 25.0   # °C
-    WARNING      = 35.0   # °C
-    CRITICAL     = 40.0   # °C
+    OPTIMAL_LOW  = 18.0
+    OPTIMAL_HIGH = 25.0
+    WARNING      = 35.0
+    CRITICAL     = 40.0
 
-    _PREGENERATE = 10_000  # steps generated at startup
+    _PREGENERATE = 10_000
 
     def __init__(
         self,
-        set_point: float = 21.0,
-        amplitude: float = 3.0,   # °C  — max deviation from set-point
-        step_size: float = 0.3,   # °C  — max random walk delta per step
-        seed:      int   = 0,
+        set_point:   float = 21.0,
+        amplitude:   float = 3.0,    # °C — hard clamp radius
+        ou_theta:    float = 0.08,   # OU reversion speed (higher = faster mean reversion)
+        ou_sigma:    float = 0.25,   # OU diffusion coefficient (°C / √day)
+        shock_prob:  float = 0.008,  # Poisson arrival rate for thermal shocks
+        shock_std:   float = 1.8,    # std of shock magnitude (°C)
+        seed:        int   = 0,
     ):
         lo, hi = set_point - amplitude, set_point + amplitude
         rng  = np.random.default_rng(seed)
         data = np.empty(self._PREGENERATE)
         data[0] = set_point
         for i in range(1, self._PREGENERATE):
-            delta   = rng.uniform(-step_size, step_size)
-            data[i] = float(np.clip(data[i - 1] + delta, lo, hi))
+            reversion = ou_theta * (set_point - data[i - 1])
+            diffusion = ou_sigma * float(rng.standard_normal())
+            shock     = float(rng.normal(0.0, shock_std)) if rng.random() < shock_prob else 0.0
+            data[i]   = float(np.clip(data[i - 1] + reversion + diffusion + shock, lo, hi))
         self._data = data
 
     def step(self, t: float) -> float:
-        """Return pre-generated temperature at step index *t*."""
         return float(self._data[int(t) % self._PREGENERATE])
 
 
@@ -135,34 +139,39 @@ class HumidityContaminationDriver:
     def __init__(
         self,
         baseline:          float = 0.10,
-        accum_per_cycle:   float = 3.5e-4,   # contamination added per print cycle
-        clean_rate:        float = 8.0e-4,    # contamination removed per maintenance unit
+        accum_per_cycle:   float = 3.5e-4,
+        clean_rate:        float = 8.0e-4,
         noise_std:         float = 0.008,
+        burst_prob:        float = 0.015,   # Poisson rate: probability of a contamination burst per day
+        burst_scale:       float = 0.06,    # exponential scale of burst magnitude
+        burst_decay:       float = 0.18,    # fraction of burst residual decayed per day
         seed:              int   = 1,
     ):
         self._level          = baseline
         self._accum          = accum_per_cycle
         self._clean          = clean_rate
         self._noise_std      = noise_std
+        self._burst_prob     = burst_prob
+        self._burst_scale    = burst_scale
+        self._burst_decay    = burst_decay
+        self._burst_residual = 0.0          # decaying tail from previous bursts
         self._rng            = np.random.default_rng(seed)
         self._prev_load      = 0.0
 
     def step(self, operational_load: float, maintenance_level: float) -> float:
-        """Return contamination index (0–1).
-
-        Parameters
-        ----------
-        operational_load : cumulative cycle count from OperationalLoadDriver
-        maintenance_level: current maintenance coefficient from MaintenanceLevelDriver
-        """
-        delta_cycles   = max(0.0, operational_load - self._prev_load)
+        delta_cycles    = max(0.0, operational_load - self._prev_load)
         self._prev_load = operational_load
 
-        accumulation   = self._accum * delta_cycles * (1.0 - maintenance_level)
-        cleaning       = self._clean * maintenance_level
-        noise          = float(self._rng.normal(0.0, self._noise_std))
+        accumulation = self._accum * delta_cycles * (1.0 - maintenance_level)
+        cleaning     = self._clean * maintenance_level
+        noise        = float(self._rng.normal(0.0, self._noise_std))
 
-        self._level += accumulation - cleaning + noise
+        # Poisson burst events — powder spills, filter saturation, humidity spikes
+        if self._rng.random() < self._burst_prob:
+            self._burst_residual += float(self._rng.exponential(self._burst_scale))
+        self._burst_residual *= (1.0 - self._burst_decay)
+
+        self._level += accumulation - cleaning + noise + self._burst_residual * 0.1
         self._level  = float(np.clip(self._level, 0.0, 1.0))
         return self._level
 
@@ -185,19 +194,35 @@ class OperationalLoadDriver:
 
     _PREGENERATE = 10_000
 
-    def __init__(self, work_rate: float = 1.0, seed: int = 3):
+    def __init__(
+        self,
+        work_rate:      float = 1.0,
+        seed:           int   = 3,
+        busy_rate:      float = 1.5,    # cycles/day in high-production state
+        idle_rate:      float = 0.4,    # cycles/day in low-production state
+        p_busy_to_idle: float = 0.04,   # transition probability per day
+        p_idle_to_busy: float = 0.10,
+        rate_noise_std: float = 0.08,   # within-state noise
+    ):
+        """2-state Markov regime-switching model (busy / idle production).
+
+        The machine alternates between a high-production and low-production
+        regime with Markov transition probabilities, producing realistic burst
+        patterns rather than a smooth random walk.
         """
-        Parameters
-        ----------
-        work_rate : starting rate (cycles per day). The rate then drifts via a
-                    bounded random walk so the chart shows realistic busy/idle variation.
-        seed      : RNG seed for the pre-generated rate series.
-        """
-        rng   = np.random.default_rng(seed)
-        rates = np.empty(self._PREGENERATE)
+        rng    = np.random.default_rng(seed)
+        rates  = np.empty(self._PREGENERATE)
+        state  = 0  # 0 = busy, 1 = idle
         rates[0] = float(np.clip(work_rate, 0.1, 2.0))
         for i in range(1, self._PREGENERATE):
-            rates[i] = float(np.clip(rates[i - 1] + rng.uniform(-0.04, 0.04), 0.1, 2.0))
+            base = busy_rate if state == 0 else idle_rate
+            r    = base + float(rng.normal(0.0, rate_noise_std))
+            rates[i] = float(np.clip(r, 0.1, 2.0))
+            # Markov transition
+            if state == 0 and rng.random() < p_busy_to_idle:
+                state = 1
+            elif state == 1 and rng.random() < p_idle_to_busy:
+                state = 0
         self._rates      = rates
         self._cumulative = 0.0
         self._idx        = 0
@@ -311,28 +336,46 @@ class PowderQualityDriver:
 
     def __init__(
         self,
-        initial_quality:  float = 0.95,
-        degrade_per_cycle: float = 3.0e-4,  # quality lost per print cycle
-        restore_rate:     float = 3.0e-3,   # fraction of quality gap restored per maintenance unit
-        noise_std:        float = 0.004,
-        seed:             int   = 4,
+        initial_quality:   float = 0.95,
+        degrade_per_cycle: float = 3.0e-4,
+        restore_rate:      float = 3.0e-3,
+        noise_std:         float = 0.004,
+        nl_accel:          float = 1.8,     # non-linear acceleration: degradation ∝ (1 + nl_accel*(1-q))
+        bad_batch_prob:    float = 0.005,   # probability of a bad-batch event per day
+        bad_batch_drop:    float = 0.06,    # quality drop magnitude from a bad batch
+        seed:              int   = 4,
     ):
-        self._quality    = float(np.clip(initial_quality, 0.0, 1.0))
-        self._degrade    = degrade_per_cycle
-        self._restore    = restore_rate
-        self._noise_std  = noise_std
-        self._rng        = np.random.default_rng(seed)
-        self._prev_load  = 0.0
+        self._quality       = float(np.clip(initial_quality, 0.0, 1.0))
+        self._degrade       = degrade_per_cycle
+        self._restore       = restore_rate
+        self._noise_std     = noise_std
+        self._nl_accel      = nl_accel
+        self._bad_batch_prob = bad_batch_prob
+        self._bad_batch_drop = bad_batch_drop
+        self._rng           = np.random.default_rng(seed)
+        self._prev_load     = 0.0
 
     def step(self, operational_load: float, maintenance_level: float) -> float:
-        """Return powder quality index (0–1)."""
-        delta_cycles     = max(0.0, operational_load - self._prev_load)
-        self._prev_load  = operational_load
+        """Return powder quality index (0–1).
 
-        self._quality -= self._degrade * delta_cycles
-        self._quality += self._restore * maintenance_level * (1.0 - self._quality)
-        self._quality += float(self._rng.normal(0.0, self._noise_std))
-        self._quality  = float(np.clip(self._quality, 0.0, 1.0))
+        Degradation is non-linear: rate increases as quality falls (already-degraded
+        powder accumulates fines and oxides faster).  Rare bad-batch events model
+        delivery of an off-spec powder lot.
+        """
+        delta_cycles    = max(0.0, operational_load - self._prev_load)
+        self._prev_load = operational_load
+
+        # Non-linear accelerating degradation
+        nl_factor       = 1.0 + self._nl_accel * (1.0 - self._quality)
+        self._quality  -= self._degrade * delta_cycles * nl_factor
+        self._quality  += self._restore * maintenance_level * (1.0 - self._quality)
+        self._quality  += float(self._rng.normal(0.0, self._noise_std))
+
+        # Bad batch event — sudden quality drop
+        if self._rng.random() < self._bad_batch_prob:
+            self._quality -= float(self._rng.uniform(0.0, self._bad_batch_drop))
+
+        self._quality = float(np.clip(self._quality, 0.0, 1.0))
         return self._quality
 
 
@@ -380,8 +423,18 @@ class BinderViscosityDriver:
         self._rng         = np.random.default_rng(seed)
         self._prev_load   = 0.0
 
+    # Arrhenius viscosity constants
+    _ARR_B     = 2200.0   # activation temperature (K) for viscosity-temperature relation
+    _T_OPT_K   = 294.65   # optimal midpoint temperature in Kelvin (21.5 °C)
+
     def step(self, temperature: float, operational_load: float, maintenance_level: float) -> float:
-        """Return binder viscosity stress index (0–1)."""
+        """Return binder viscosity stress index (0–1).
+
+        Temperature coupling uses an Arrhenius viscosity model:
+            η(T) ∝ exp(B/T_K)
+        so the viscosity stress is the normalised deviation from optimal —
+        non-linear and asymmetric (cold is far worse than hot).
+        """
         delta_cycles    = max(0.0, operational_load - self._prev_load)
         self._prev_load = operational_load
 
@@ -390,9 +443,10 @@ class BinderViscosityDriver:
         self._stress += float(self._rng.normal(0.0, self._noise_std))
         self._stress  = float(np.clip(self._stress, 0.0, 1.0))
 
-        cold_excess = max(0.0, self._OPTIMAL_TEMP_LOW  - temperature)
-        hot_excess  = max(0.0, temperature - self._OPTIMAL_TEMP_HIGH)
-        temp_offset = self._temp_cold_k * cold_excess + self._temp_hot_k * hot_excess
+        # Non-linear Arrhenius temperature offset
+        T_K          = temperature + 273.15
+        arr_ratio    = float(np.exp(self._ARR_B * (1.0 / T_K - 1.0 / self._T_OPT_K)))
+        temp_offset  = float(np.clip((arr_ratio - 1.0) * 0.12, -0.05, 0.5))
 
         return float(np.clip(self._stress + temp_offset, 0.0, 1.0))
 
@@ -420,26 +474,36 @@ class VoltageFluctuationDriver:
 
     def __init__(
         self,
-        baseline:    float = 0.05,
-        revert_rate: float = 0.12,   # fraction per day to pull back toward baseline
-        noise_std:   float = 0.015,
-        spike_prob:  float = 0.02,   # probability of a spike each day
-        spike_scale: float = 0.35,   # exponential scale of spike magnitude
-        seed:        int   = 6,
+        baseline:      float = 0.05,
+        revert_rate:   float = 0.12,
+        noise_std:     float = 0.015,
+        spike_prob:    float = 0.02,
+        spike_scale:   float = 0.20,    # Pareto scale parameter
+        pareto_alpha:  float = 1.4,     # Pareto shape — lower = heavier tail, more extreme spikes
+        seed:          int   = 6,
     ):
-        self._stress      = baseline
-        self._baseline    = baseline
-        self._revert      = revert_rate
-        self._noise_std   = noise_std
-        self._spike_prob  = spike_prob
-        self._spike_scale = spike_scale
-        self._rng         = np.random.default_rng(seed)
+        self._stress       = baseline
+        self._baseline     = baseline
+        self._revert       = revert_rate
+        self._noise_std    = noise_std
+        self._spike_prob   = spike_prob
+        self._spike_scale  = spike_scale
+        self._pareto_alpha = pareto_alpha
+        self._rng          = np.random.default_rng(seed)
 
     def step(self) -> float:
-        """Return voltage stress index (0–1)."""
+        """Return voltage stress index (0–1).
+
+        Spikes use a Pareto (power-law) distribution so rare but extreme grid
+        transients are correctly represented — exponential would underestimate
+        the tail of real power-quality events.
+        """
         self._stress += self._revert * (self._baseline - self._stress)
         if self._rng.random() < self._spike_prob:
-            self._stress += float(self._rng.exponential(self._spike_scale))
+            # Pareto sample: scale * U^(-1/alpha) - scale
+            u         = max(self._rng.random(), 1e-9)
+            magnitude = self._spike_scale * (u ** (-1.0 / self._pareto_alpha) - 1.0)
+            self._stress += float(np.clip(magnitude, 0.0, 1.0))
         self._stress += float(self._rng.normal(0.0, self._noise_std))
         self._stress  = float(np.clip(self._stress, 0.0, 1.0))
         return self._stress
