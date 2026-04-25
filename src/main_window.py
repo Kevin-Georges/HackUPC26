@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from constants import BG, PANEL, BORDER, TEXT, DIM
 from model_viewer import ModelViewer
-from temp_chart import TempChart
+from charts_panel import ChartsPanel
 from health_panel import HealthPanel
 
 
@@ -50,12 +50,7 @@ class MainWindow(QMainWindow):
         right = QVBoxLayout()
         right.setSpacing(8)
 
-        chart_frame = QFrame()
-        chart_frame.setStyleSheet(
-            f"background:{PANEL}; border:1px solid {BORDER}; border-radius:5px;"
-        )
-        QVBoxLayout(chart_frame).addWidget(TempChart())
-        right.addWidget(chart_frame, stretch=2)
+        right.addWidget(ChartsPanel(), stretch=2)
 
         health = HealthPanel()
         health.setStyleSheet(
