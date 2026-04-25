@@ -31,20 +31,11 @@ class HumidityChart(FigureCanvasQTAgg):
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
-        ax.axhspan(0.0, HumidityContaminationDriver.NOMINAL,
-                   color=GREEN, alpha=0.07, label="Nominal range")
-        ax.axhline(HumidityContaminationDriver.CRITICAL,
-                   color=RED, lw=0.9, ls="--", alpha=0.8,
-                   label=f"Critical  {HumidityContaminationDriver.CRITICAL:.2f}")
-        ax.axhline(HumidityContaminationDriver.WARNING,
-                   color=YELLOW, lw=0.9, ls="--", alpha=0.8,
-                   label=f"Warning  {HumidityContaminationDriver.WARNING:.2f}")
-
         (self._line,) = ax.plot([], [], color="#58a6ff", lw=0.9, alpha=0.9,
                                 label="Contamination index")
 
         ax.set_xlim(0, _WINDOW_DAYS)
-        ax.set_ylim(0.0, 1.0)
+        ax.set_ylim(0.0, 0.45)
         self._title = ax.set_title("Humidity / Contamination — waiting…",
                                    color=TEXT, fontsize=9, pad=5)
         ax.set_xlabel("Day", color=DIM, fontsize=8)
@@ -99,13 +90,11 @@ class UsageChart(FigureCanvasQTAgg):
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
-        ax.axhline(1.0, color=DIM, lw=0.7, ls="--", alpha=0.5, label="Baseline (1.0)")
-
         (self._line,) = ax.plot([], [], color="#a371f7", lw=0.9, alpha=0.9,
                                 label="Cycles / day")
 
         ax.set_xlim(0, _WINDOW_DAYS)
-        ax.set_ylim(0.0, 2.2)
+        ax.set_ylim(0.0, 2.1)
         self._title = ax.set_title("Printer Usage — waiting…",
                                    color=TEXT, fontsize=9, pad=5)
         ax.set_xlabel("Day", color=DIM, fontsize=8)
