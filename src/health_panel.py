@@ -3,23 +3,35 @@ from PyQt5.QtGui import QFont
 from constants import GREEN, YELLOW, RED, TEXT, DIM
 
 
+def _pct_to_status(pct_str: str) -> str:
+    try:
+        value = int(pct_str.rstrip("%"))
+    except ValueError:
+        return "Not Working"
+    if value > 70:
+        return "Fully Functional"
+    if value > 30:
+        return "Degraded"
+    return "Not Working"
+
+
 def _health_color(pct_str: str) -> str:
     try:
         value = int(pct_str.rstrip("%"))
     except ValueError:
         return RED
-    if value >= 70:
+    if value > 70:
         return GREEN
-    if value >= 30:
+    if value > 30:
         return YELLOW
     return RED
 
 
 class HealthPanel(QFrame):
     _ROWS = [
-        ("Recoater Blade", "DEGRADED", "70%"),
-        ("Nozzle Plate", "DEGRADED", "50%"),
-        ("Heating Elements", "FUNCTIONAL", "100%"),
+        ("Recoater Blade", "70%"),
+        ("Nozzle Plate", "50%"),
+        ("Heating Elements", "100%"),
     ]
 
     def __init__(self):
@@ -43,8 +55,9 @@ class HealthPanel(QFrame):
             lbl.setStyleSheet(f"color:{DIM}; border:none;")
             grid.addWidget(lbl, 0, col)
 
-        for row, (name, status, pct) in enumerate(self._ROWS, 1):
+        for row, (name, pct) in enumerate(self._ROWS, 1):
             color = _health_color(pct)
+            status = _pct_to_status(pct)
             for col, (val, style) in enumerate(
                 [
                     (name, f"color:{TEXT};"),

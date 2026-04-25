@@ -54,7 +54,7 @@ def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
 def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:
     """Convert HealthPanel._ROWS into {glb_node_name: (r, g, b)}."""
     result = {}
-    for label, _, pct in health_rows:
+    for label, pct in health_rows:
         node = _LABEL_TO_NODE.get(label)
         if node:
             result[node] = _pct_to_rgb(pct)
