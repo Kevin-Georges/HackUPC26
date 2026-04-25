@@ -54,11 +54,17 @@ class MainWindow(QMainWindow):
 
         self._health = health
         self._viewer = viewer
+        self._charts = charts
         charts.snapshot_ready.connect(self._on_snap)
+        charts.reset_requested.connect(health.reset)
+        health.component_failed.connect(self._on_component_failed)
 
         rw = QWidget()
         rw.setLayout(right)
         root.addWidget(rw, stretch=2)
+
+    def _on_component_failed(self, name: str) -> None:
+        self._charts.pause()
 
     def _on_snap(self, snap) -> None:
         self._health.update(

@@ -78,7 +78,7 @@ class ModelViewer(QOpenGLWidget):
         self.rot_x = 20.0
         self.rot_y = 30.0
         self.rot_z = 0.0
-        self._dist = 5.0
+        self._dist = 3.2
         self._last = None
         self._ready = False
         self._meshes: list[tuple[int, int, str]] = []  # (vbo, n_verts, node_name)

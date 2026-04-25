@@ -72,3 +72,13 @@ class TempChart(FigureCanvasQTAgg):
         self._title.set_text(f"Temperature Stress — {temp:.1f} °C  [{label}]")
         self._title.set_color(color)
         self.draw_idle()
+
+    def reset(self) -> None:
+        self._t_buf.clear()
+        self._tmp_buf.clear()
+        self._tick = 0
+        self._line.set_data([], [])
+        self._ax.set_xlim(0, _WINDOW_DAYS)
+        self._title.set_text("Temperature Stress — waiting…")
+        self._title.set_color(TEXT)
+        self.draw_idle()
