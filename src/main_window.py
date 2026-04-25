@@ -19,12 +19,16 @@ _CSV_HEADER = [
     "temperature_c",
     "humidity_index",
     "operational_load",
+    "maintenance_level",
     "powder_quality",
     "binder_viscosity_stress",
     "voltage_stress",
     "recoater_blade_pct",
     "nozzle_plate_pct",
     "heating_elements_pct",
+    "drive_motor_rails_pct",
+    "cleaning_thermal_iface_pct",
+    "insulation_sensors_pct",
 ]
 
 
@@ -104,21 +108,26 @@ class MainWindow(QMainWindow):
             snap.powder_quality,
             snap.binder_viscosity_stress,
             snap.voltage_stress,
+            snap.maintenance_level,
         )
         self._viewer.set_component_colors(build_color_map(self._health._ROWS))
 
-        health_by_name = {name: pct for name, pct in self._health._ROWS}
+        h = {name: pct for name, pct in self._health._ROWS}
         self._csv_writer.writerow([
             self._health._day,
             f"{snap.temperature_stress:.4f}",
             f"{snap.humidity_contamination:.4f}",
             f"{snap.operational_load:.4f}",
+            f"{snap.maintenance_level:.4f}",
             f"{snap.powder_quality:.4f}",
             f"{snap.binder_viscosity_stress:.4f}",
             f"{snap.voltage_stress:.4f}",
-            health_by_name.get("Recoater Blade",    ""),
-            health_by_name.get("Nozzle Plate",      ""),
-            health_by_name.get("Heating Elements",  ""),
+            h.get("Recoater Blade",           ""),
+            h.get("Nozzle Plate",             ""),
+            h.get("Heating Elements",         ""),
+            h.get("Drive Motor & Rails",      ""),
+            h.get("Cleaning & Thermal Iface", ""),
+            h.get("Insulation & Sensors",     ""),
         ])
         self._csv_file.flush()
 

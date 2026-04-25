@@ -30,15 +30,15 @@ void main() {
 }
 """
 
-# ── Name-translation: health-panel label → glb node name ─────────────────────
-_LABEL_TO_NODE: dict[str, str] = {
-    "Nozzle Plate":      "Nozzle Plates",
-    "Recoater Blade":    "Recoater Roller",
-    "Heating Elements":  "Heating Lamps",
-    "Vacuum Pump":       "Vacuum Pump",
-    "Vacuum Area":       "Vacuum Area",
+# ── Name-translation: health-panel label → glb node names ────────────────────
+_LABEL_TO_NODE: dict[str, list[str]] = {
+    "Nozzle Plate":             ["Nozzle Plates"],
+    "Recoater Blade":           ["Recoater Roller"],
+    "Heating Elements":         ["Heating Lamps"],
+    "Drive Motor & Rails":      ["Motor", "Linear Guide Rail"],
+    "Cleaning & Thermal Iface": ["Cleaning Interface"],
+    "Insulation & Sensors":     ["Insulation Plating", "Temperature Sensor"],
 }
-
 
 
 def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
@@ -47,7 +47,7 @@ def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
     except ValueError:
         return colorsys.hsv_to_rgb(0.0, 1.0, 1.0)
     t = max(0.0, min(1.0, value / 100.0))
-    hue = t / 3.0  # 0.0 = red, 1/3 = green
+    hue = t / 3.0
     return colorsys.hsv_to_rgb(hue, 1.0, 1.0)
 
 
@@ -55,8 +55,7 @@ def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:
     """Convert HealthPanel._ROWS into {glb_node_name: (r, g, b)}."""
     result = {}
     for label, pct in health_rows:
-        node = _LABEL_TO_NODE.get(label)
-        if node:
+        for node in _LABEL_TO_NODE.get(label, []):
             result[node] = _pct_to_rgb(pct)
     return result
 
