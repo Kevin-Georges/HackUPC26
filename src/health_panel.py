@@ -2,7 +2,7 @@ from collections import deque
 
 from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QGridLayout, QWidget, QSizePolicy
 from PyQt5.QtGui import QFont, QPainter, QColor, QFontMetrics
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from constants import GREEN, YELLOW, RED, TEXT, DIM
 from degradation_engine import DegradationEngine
 
@@ -119,11 +119,14 @@ def _health_color(pct_str: str) -> str:
 
 class HealthPanel(QFrame):
 
+    component_failed = pyqtSignal(str)  # emits component name when health first hits 0
+
     def __init__(self):
         super().__init__()
 
         self._engine = DegradationEngine()
         self._day = 0
+        self._failed: set[str] = set()
         components = self._engine.tick(21.0, 0.0, 0.0)
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
@@ -171,6 +174,21 @@ class HealthPanel(QFrame):
 
         lay.addLayout(self._grid)
 
+    def reset(self) -> None:
+        self._engine = DegradationEngine()
+        self._day = 0
+        self._failed.clear()
+        self._title.setText(f"Component Health — Day {self._day}")
+        components = self._engine.tick(21.0, 0.0, 0.0)
+        self._ROWS = [(c.name, c.pct_str) for c in components]
+        for i, (_, pct) in enumerate(self._ROWS):
+            self._status_labels[i].setText(_pct_to_status(pct))
+            self._status_labels[i].setStyleSheet(
+                f"color:{_health_color(pct)}; font-weight:bold; border:none;"
+            )
+            self._health_bars[i]._history.clear()
+            self._health_bars[i].push(int(pct.rstrip("%")))
+
     def update(
         self,
         temperature:             float,
@@ -193,7 +211,7 @@ class HealthPanel(QFrame):
         )
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
-        for i, (_, pct) in enumerate(self._ROWS):
+        for i, (name, pct) in enumerate(self._ROWS):
             color  = _health_color(pct)
             status = _pct_to_status(pct)
 
@@ -201,4 +219,9 @@ class HealthPanel(QFrame):
             self._status_labels[i].setStyleSheet(
                 f"color:{color}; font-weight:bold; border:none;"
             )
-            self._health_bars[i].push(int(pct.rstrip("%")))
+            pct_val = int(pct.rstrip("%"))
+            self._health_bars[i].push(pct_val)
+
+            if pct_val <= 30 and name not in self._failed:
+                self._failed.add(name)
+                self.component_failed.emit(name)

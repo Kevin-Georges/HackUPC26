@@ -74,6 +74,16 @@ class HumidityChart(FigureCanvasQTAgg):
         self._title.set_color(color)
         self.draw_idle()
 
+    def reset(self) -> None:
+        self._t_buf.clear()
+        self._y_buf.clear()
+        self._tick = 0
+        self._line.set_data([], [])
+        self._ax.set_xlim(0, _WINDOW_DAYS)
+        self._title.set_text("Humidity / Contamination — waiting…")
+        self._title.set_color(TEXT)
+        self.draw_idle()
+
 
 # ── Printer usage (operational load) chart ────────────────────────────────────
 
@@ -132,6 +142,17 @@ class UsageChart(FigureCanvasQTAgg):
         self._title.set_color(TEXT)
         self.draw_idle()
 
+    def reset(self) -> None:
+        self._t_buf.clear()
+        self._y_buf.clear()
+        self._tick = 0
+        self._prev_load = 0.0
+        self._line.set_data([], [])
+        self._ax.set_xlim(0, _WINDOW_DAYS)
+        self._title.set_text("Printer Usage — waiting…")
+        self._title.set_color(TEXT)
+        self.draw_idle()
+
 
 # ── Tabbed container ──────────────────────────────────────────────────────────
 
@@ -186,7 +207,8 @@ class ChartsPanel(QWidget):
     firing at a fixed reduced rate.
     """
 
-    snapshot_ready = pyqtSignal(object)
+    snapshot_ready   = pyqtSignal(object)
+    reset_requested  = pyqtSignal()
 
     _SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
     _SPEED_IDX_DEFAULT = 2  # 1×
@@ -228,6 +250,10 @@ class ChartsPanel(QWidget):
         btn_fast.setStyleSheet(_BTN_STYLE)
         btn_fast.clicked.connect(self._faster)
 
+        btn_reset = QPushButton("↺  Reset")
+        btn_reset.setStyleSheet(_BTN_STYLE)
+        btn_reset.clicked.connect(self._reset)
+
         self._speed_label = QLabel("1×")
         self._speed_label.setFont(QFont("Segoe UI", 8))
         self._speed_label.setStyleSheet(f"color:{TEXT};")
@@ -236,6 +262,7 @@ class ChartsPanel(QWidget):
         bar.addWidget(btn_slow)
         bar.addWidget(self._btn_pause)
         bar.addWidget(btn_fast)
+        bar.addWidget(btn_reset)
         bar.addWidget(self._speed_label)
         bar.addStretch()
 
@@ -253,6 +280,10 @@ class ChartsPanel(QWidget):
 
     # ── Playback control slots ────────────────────────────────────────────────
 
+    def pause(self) -> None:
+        self._paused = True
+        self._btn_pause.setText("▶  Resume")
+
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
         self._btn_pause.setText("▶  Resume" if self._paused else "⏸  Pause")
@@ -266,6 +297,18 @@ class ChartsPanel(QWidget):
         if self._speed_idx < len(self._SPEEDS) - 1:
             self._speed_idx += 1
             self._update_speed_label()
+
+    def _reset(self) -> None:
+        self._suite     = DriverSuite(seed=42)
+        self._tick_acc  = 0.0
+        self._paused    = False
+        self._speed_idx = self._SPEED_IDX_DEFAULT
+        self._btn_pause.setText("⏸  Pause")
+        self._update_speed_label()
+        self._temp_chart.reset()
+        self._humidity_chart.reset()
+        self._usage_chart.reset()
+        self.reset_requested.emit()
 
     def _update_speed_label(self) -> None:
         spd = self._SPEEDS[self._speed_idx]
