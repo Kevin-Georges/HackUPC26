@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFrame,
 )
 from constants import BG, PANEL, BORDER, TEXT
-from model_viewer import ModelViewer
+from model_viewer import ModelViewer, build_color_map
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
 
@@ -33,7 +33,8 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(4)
 
-        ll.addWidget(ModelViewer(model_path))
+        viewer = ModelViewer(model_path)
+        ll.addWidget(viewer)
         root.addWidget(left, stretch=3)
 
         # ── Right: chart + health table ───────────────────────────────────────
@@ -47,6 +48,8 @@ class MainWindow(QMainWindow):
             f"background:{PANEL}; border:1px solid {BORDER}; border-radius:5px;"
         )
         right.addWidget(health, stretch=1)
+
+        viewer.set_component_colors(build_color_map(HealthPanel._ROWS))
 
         rw = QWidget()
         rw.setLayout(right)
