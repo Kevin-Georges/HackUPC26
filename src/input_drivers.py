@@ -62,10 +62,11 @@ class TemperatureStressDriver:
 
     Model
     -----
-    A stable set-point with:
-      1. Slow sinusoidal drift simulating a thermal day-cycle.
-      2. Gaussian noise (sensor jitter + HVAC fluctuation).
-      3. Rare sudden thermal shocks (door opening, cooling failure, etc.).
+    A bounded random walk pre-generated at initialisation time.
+    Each step moves by a small random delta, clamped so the value
+    never leaves [set_point - amplitude, set_point + amplitude].
+    The full series is stored in an array; step(t) just indexes into it,
+    so the chart always reads from fixed data rather than sampling live.
     """
 
     OPTIMAL_LOW  = 18.0   # °C
@@ -73,30 +74,27 @@ class TemperatureStressDriver:
     WARNING      = 35.0   # °C
     CRITICAL     = 40.0   # °C
 
+    _PREGENERATE = 10_000  # steps generated at startup
+
     def __init__(
         self,
-        set_point:         float = 21.0,
-        noise_std:         float = 1.2,
-        drift_amplitude:   float = 3.0,
-        drift_period_s:    float = 28_800.0,  # 8-hour HVAC cycle
-        shock_probability: float = 0.015,
-        shock_magnitude:   float = 14.0,
-        seed:              int   = 0,
+        set_point: float = 21.0,
+        amplitude: float = 3.0,   # °C  — max deviation from set-point
+        step_size: float = 0.3,   # °C  — max random walk delta per step
+        seed:      int   = 0,
     ):
-        self._set_point      = set_point
-        self._noise_std      = noise_std
-        self._drift_amp      = drift_amplitude
-        self._drift_period   = drift_period_s
-        self._shock_prob     = shock_probability
-        self._shock_mag      = shock_magnitude
-        self._rng            = np.random.default_rng(seed)
+        lo, hi = set_point - amplitude, set_point + amplitude
+        rng  = np.random.default_rng(seed)
+        data = np.empty(self._PREGENERATE)
+        data[0] = set_point
+        for i in range(1, self._PREGENERATE):
+            delta   = rng.uniform(-step_size, step_size)
+            data[i] = float(np.clip(data[i - 1] + delta, lo, hi))
+        self._data = data
 
     def step(self, t: float) -> float:
-        """Return temperature (°C) at simulation time *t* (seconds)."""
-        drift = self._drift_amp * np.sin(2.0 * np.pi * t / self._drift_period)
-        noise = float(self._rng.normal(0.0, self._noise_std))
-        shock = float(self._shock_mag if self._rng.random() < self._shock_prob else 0.0)
-        return float(np.clip(self._set_point + drift + noise + shock, -5.0, 80.0))
+        """Return pre-generated temperature at step index *t*."""
+        return float(self._data[int(t) % self._PREGENERATE])
 
 
 class HumidityContaminationDriver:
@@ -173,19 +171,35 @@ class OperationalLoadDriver:
     or machine downtime (e.g., waiting for powder resupply).
     """
 
-    def __init__(self, work_rate: float = 1.0):
+    _PREGENERATE = 10_000
+
+    def __init__(self, work_rate: float = 1.0, seed: int = 3):
         """
         Parameters
         ----------
-        work_rate : cycles added per unit of simulation time (default 1.0).
+        work_rate : starting rate (cycles per step). The rate then drifts via a
+                    bounded random walk so the chart shows realistic busy/idle variation.
+        seed      : RNG seed for the pre-generated rate series.
         """
-        self._rate       = max(0.0, work_rate)
+        rng   = np.random.default_rng(seed)
+        rates = np.empty(self._PREGENERATE)
+        rates[0] = float(np.clip(work_rate, 0.1, 2.0))
+        for i in range(1, self._PREGENERATE):
+            rates[i] = float(np.clip(rates[i - 1] + rng.uniform(-0.04, 0.04), 0.1, 2.0))
+        self._rates      = rates
         self._cumulative = 0.0
+        self._idx        = 0
 
     def step(self, dt: float = 1.0) -> float:
         """Advance by *dt* time units and return the cumulative cycle count."""
-        self._cumulative += self._rate * dt
+        self._cumulative += self._rates[self._idx % self._PREGENERATE] * dt
+        self._idx += 1
         return self._cumulative
+
+    @property
+    def current_rate(self) -> float:
+        """Instantaneous work rate at the last completed step (cycles / step)."""
+        return float(self._rates[(self._idx - 1) % self._PREGENERATE])
 
     @property
     def cycles(self) -> float:
@@ -193,6 +207,7 @@ class OperationalLoadDriver:
 
     def reset(self) -> None:
         self._cumulative = 0.0
+        self._idx        = 0
 
 
 class MaintenanceLevelDriver:
@@ -294,11 +309,22 @@ class DriverSuite:
             seed=seed,
         )
         self.contamination = HumidityContaminationDriver(seed=seed + 1)
-        self.load          = OperationalLoadDriver(work_rate=work_rate)
+        self.load          = OperationalLoadDriver(work_rate=work_rate, seed=seed + 3)
         self.maintenance   = MaintenanceLevelDriver(
             service_interval=service_interval,
             seed=seed + 2,
         )
+        self._t = 0.0
+
+    def tick(self, dt: float = 1.0) -> DriverSnapshot:
+        """Auto-incrementing step — no need to track *t* externally.
+
+        Intended for real-time use where a timer calls this once per interval.
+        The internal clock advances by *dt* each call.
+        """
+        snap = self.step(self._t, dt)
+        self._t += dt
+        return snap
 
     def step(self, t: float, dt: float = 1.0) -> DriverSnapshot:
         """Advance all drivers by one timestep and return a DriverSnapshot.
