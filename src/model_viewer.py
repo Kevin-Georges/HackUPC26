@@ -1,3 +1,4 @@
+import colorsys
 import warnings
 import numpy as np
 from PyQt5.QtWidgets import QOpenGLWidget
@@ -38,21 +39,25 @@ _LABEL_TO_NODE: dict[str, str] = {
     "Vacuum Area":       "Vacuum Area",
 }
 
-_STATUS_TO_RGB: dict[str, tuple[float, float, float]] = {
-    "FUNCTIONAL": (0.247, 0.725, 0.314),
-    "DEGRADED":   (0.824, 0.600, 0.133),
-    "CRITICAL":   (0.973, 0.318, 0.286),
-}
+
+
+def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
+    try:
+        value = int(pct_str.rstrip("%"))
+    except ValueError:
+        return colorsys.hsv_to_rgb(0.0, 1.0, 1.0)
+    t = max(0.0, min(1.0, value / 100.0))
+    hue = t / 3.0  # 0.0 = red, 1/3 = green
+    return colorsys.hsv_to_rgb(hue, 1.0, 1.0)
 
 
 def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:
     """Convert HealthPanel._ROWS into {glb_node_name: (r, g, b)}."""
     result = {}
-    for label, status, _pct, _color in health_rows:
+    for label, _, pct in health_rows:
         node = _LABEL_TO_NODE.get(label)
-        rgb = _STATUS_TO_RGB.get(status)
-        if node and rgb:
-            result[node] = rgb
+        if node:
+            result[node] = _pct_to_rgb(pct)
     return result
 
 
