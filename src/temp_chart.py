@@ -27,26 +27,19 @@ class TempChart(FigureCanvasQTAgg):
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
-        ax.axhspan(
-            TemperatureStressDriver.OPTIMAL_LOW,
-            TemperatureStressDriver.OPTIMAL_HIGH,
-            color=GREEN, alpha=0.07, label="Optimal range",
-        )
         ax.axhline(
             TemperatureStressDriver.CRITICAL,
             color=RED, lw=0.9, ls="--", alpha=0.8,
-            label=f"Critical  {TemperatureStressDriver.CRITICAL:.0f} °C",
         )
         ax.axhline(
             TemperatureStressDriver.WARNING,
             color=YELLOW, lw=0.9, ls="--", alpha=0.8,
-            label=f"Warning  {TemperatureStressDriver.WARNING:.0f} °C",
         )
         (self._line,) = ax.plot([], [], color="#ff7043", lw=0.9, alpha=0.9,
                                 label="Ambient temp")
 
         ax.set_xlim(0, _WINDOW_DAYS)
-        ax.set_ylim(10, 55)
+        ax.set_ylim(15, 28)  # driver bounded to set_point ± amplitude = 18–24 °C
         self._title = ax.set_title("Temperature Stress — waiting…", color=TEXT,
                                    fontsize=9, pad=5)
         ax.set_xlabel("Day", color=DIM, fontsize=8)
