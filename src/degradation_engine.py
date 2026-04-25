@@ -18,7 +18,7 @@ degradation history is preserved in the engine's state.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Physical constants
 _BOLTZMANN_EV = 8.617e-5    # Boltzmann constant in eV/K
@@ -30,7 +30,8 @@ _OPTIMAL_TEMP = 21.5        # °C — midpoint of the safe operating band (18–
 @dataclass(frozen=True)
 class ComponentHealth:
     name:       str
-    health_pct: int   # 0–100
+    health_pct: int              # 0–100
+    metrics:    dict = field(default_factory=dict)  # physical state variables
 
     @property
     def pct_str(self) -> str:
@@ -240,12 +241,20 @@ class DegradationEngine:
             return round(max(0.0, min(1.0, 1.0 - dmg / capacity)) * 100)
 
         return [
-            ComponentHealth("Recoater Blade",            _pct(self._blade_wear,    self._ARCHARD_W_MAX)),
-            ComponentHealth("Nozzle Plate",               _pct(self._nozzle_damage, 1.0)),
-            ComponentHealth("Heating Elements",           _pct(self._heater_damage, 1.0)),
-            ComponentHealth("Drive Motor & Rails",        _pct(self._motor_crack,   self._PARIS_A_CRIT)),
-            ComponentHealth("Cleaning & Thermal Iface",  _pct(self._fouling,       self._KS_RF_MAX)),
-            ComponentHealth("Insulation & Sensors",       _pct(self._ins_damage,    self._INS_DAMAGE_MAX)),
+            ComponentHealth("Recoater Blade", _pct(self._blade_wear, self._ARCHARD_W_MAX),
+                metrics={"wear_volume": round(self._blade_wear, 6),
+                         "wear_pct_of_limit": round(self._blade_wear / self._ARCHARD_W_MAX * 100, 2)}),
+            ComponentHealth("Nozzle Plate", _pct(self._nozzle_damage, 1.0),
+                metrics={"fatigue_damage": round(self._nozzle_damage, 6)}),
+            ComponentHealth("Heating Elements", _pct(self._heater_damage, 1.0),
+                metrics={"degradation_fraction": round(self._heater_damage, 6)}),
+            ComponentHealth("Drive Motor & Rails", _pct(self._motor_crack, self._PARIS_A_CRIT),
+                metrics={"crack_length_norm": round(self._motor_crack, 6)}),
+            ComponentHealth("Cleaning & Thermal Iface", _pct(self._fouling, self._KS_RF_MAX),
+                metrics={"fouling_resistance": round(self._fouling, 6)}),
+            ComponentHealth("Insulation & Sensors", _pct(self._ins_damage, self._INS_DAMAGE_MAX),
+                metrics={"moisture_content": round(self._ins_moisture, 6),
+                         "thermal_damage": round(self._ins_damage, 6)}),
         ]
 
     # ── Private model calculations ─────────────────────────────────────────────

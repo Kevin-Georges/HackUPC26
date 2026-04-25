@@ -2,9 +2,9 @@ import colorsys
 import warnings
 import numpy as np
 from PyQt5.QtWidgets import QOpenGLWidget
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from OpenGL.GL import *  # noqa: F401,F403
-from OpenGL.GLU import gluPerspective
+from OpenGL.GLU import gluPerspective, gluUnProject
 import trimesh
 from constants import BLUE
 
@@ -40,6 +40,13 @@ _LABEL_TO_NODE: dict[str, list[str]] = {
     "Insulation & Sensors":     ["Insulation Plating", "Temperature Sensor"],
 }
 
+# Reverse map: glb node name → health-panel label
+_NODE_TO_LABEL: dict[str, str] = {
+    node: label
+    for label, nodes in _LABEL_TO_NODE.items()
+    for node in nodes
+}
+
 
 def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
     try:
@@ -69,7 +76,10 @@ class ModelViewer(QOpenGLWidget):
     Left-drag  → rotate X/Y
     Right-drag → rotate Z
     Scroll     → zoom
+    Click      → pick component, emits component_selected(label)
     """
+
+    component_selected = pyqtSignal(str)  # health-panel label, or "" for background
 
     def __init__(self, model_path: str, parent=None):
         super().__init__(parent)
@@ -80,9 +90,10 @@ class ModelViewer(QOpenGLWidget):
         self._dist = 3.2
         self._last = None
         self._ready = False
-        self._meshes: list[tuple[int, int, str]] = []  # (vbo, n_verts, node_name)
+        self._meshes: list[tuple[int, int, str, np.ndarray]] = []  # (vbo, n_verts, node_name, cpu_verts)
         self._prog = 0
         self._component_colors: dict[str, tuple[float, float, float]] = {}
+        self._pending_pick: tuple[int, int] | None = None
         self.setMinimumSize(400, 400)
 
         self._anim_timer = QTimer(self)
@@ -168,7 +179,7 @@ class ModelViewer(QOpenGLWidget):
                 glBindBuffer(GL_ARRAY_BUFFER, vbo)
                 glBufferData(GL_ARRAY_BUFFER, flat.nbytes, flat, GL_STATIC_DRAW)
                 glBindBuffer(GL_ARRAY_BUFFER, 0)
-                self._meshes.append((vbo, len(flat), node_name))
+                self._meshes.append((vbo, len(flat), node_name, flat))
 
             self._ready = True
             print(
@@ -178,7 +189,6 @@ class ModelViewer(QOpenGLWidget):
             print(f"[ModelViewer] node names: {sorted(valid.keys())}")
         except Exception as exc:
             import traceback
-
             print(f"[ModelViewer] load error: {exc}")
             traceback.print_exc()
 
@@ -193,11 +203,15 @@ class ModelViewer(QOpenGLWidget):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         glTranslatef(0.0, 0.0, -self._dist)
-
         glRotatef(self.rot_x, 1, 0, 0)
         glRotatef(self.rot_y, 0, 1, 0)
         glRotatef(self.rot_z, 0, 0, 1)
         glTranslatef(0.4, 0.0, 0.0)
+
+        # Pick after transforms are set so gluUnProject reads correct matrices
+        if self._pending_pick is not None and self._ready:
+            self._do_pick_cpu(*self._pending_pick)
+            self._pending_pick = None
 
         if not self._ready:
             glBegin(GL_LINES)
@@ -219,7 +233,7 @@ class ModelViewer(QOpenGLWidget):
         loc_def = glGetUniformLocation(self._prog, "uDefaultColor")
         glUniform3f(loc_def, *BLUE)
 
-        for vbo, n_verts, node_name in self._meshes:
+        for vbo, n_verts, node_name, _ in self._meshes:
             rgb = self._component_colors.get(node_name)
             if rgb is not None:
                 glUniform1i(loc_use, 1)
@@ -239,6 +253,62 @@ class ModelViewer(QOpenGLWidget):
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         glUseProgram(0)
 
+    # ── CPU ray picking ───────────────────────────────────────────────────────
+
+    def _do_pick_cpu(self, px: int, py: int) -> None:
+        """Möller–Trumbore ray picking — called from paintGL after transforms.
+
+        Uses gluUnProject to build a world-space ray from the click pixel,
+        then tests it only against mapped component meshes (skips outer shell).
+        """
+        try:
+            mv = glGetDoublev(GL_MODELVIEW_MATRIX)
+            pr = glGetDoublev(GL_PROJECTION_MATRIX)
+            vp = glGetIntegerv(GL_VIEWPORT)
+            win_y = int(vp[3]) - 1 - py
+
+            near = np.array(gluUnProject(px, win_y, 0.0, mv, pr, vp), dtype=np.float64)
+            far  = np.array(gluUnProject(px, win_y, 1.0, mv, pr, vp), dtype=np.float64)
+            ray_d = far - near
+            length = np.linalg.norm(ray_d)
+            if length < 1e-10:
+                return
+            ray_d /= length
+
+            best_t     = np.inf
+            best_label = ""
+            for _, _, node_name, cpu_verts in self._meshes:
+                if node_name not in _NODE_TO_LABEL:
+                    continue
+                tris = cpu_verts.reshape(-1, 3, 3).astype(np.float64)
+                t = self._moller_trumbore(near, ray_d, tris)
+                if t < best_t:
+                    best_t     = t
+                    best_label = _NODE_TO_LABEL[node_name]
+
+            self.component_selected.emit(best_label)
+        except Exception as exc:
+            print(f"[Pick] {exc}")
+
+    @staticmethod
+    def _moller_trumbore(ro: np.ndarray, rd: np.ndarray,
+                          tris: np.ndarray) -> float:
+        """Vectorised Möller–Trumbore. Returns minimum t > 0, or inf."""
+        v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
+        e1 = v1 - v0
+        e2 = v2 - v0
+        h  = np.cross(rd, e2)
+        a  = (e1 * h).sum(axis=1)
+        ok = np.abs(a) > 1e-8
+        f  = np.where(ok, 1.0 / np.where(ok, a, 1.0), 0.0)
+        s  = ro - v0
+        u  = f * (s * h).sum(axis=1)
+        q  = np.cross(s, e1)
+        v  = f * (rd * q).sum(axis=1)
+        t  = f * (e2 * q).sum(axis=1)
+        hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-4)
+        return float(np.min(t[hit])) if np.any(hit) else np.inf
+
     # ── Input ─────────────────────────────────────────────────────────────────
 
     def _reset_idle(self) -> None:
@@ -252,6 +322,9 @@ class ModelViewer(QOpenGLWidget):
     def mousePressEvent(self, e):
         self._reset_idle()
         self._last = e.pos()
+        if e.button() == Qt.LeftButton:
+            self._pending_pick = (e.x(), e.y())
+            self.update()
 
     def mouseMoveEvent(self, e):
         if self._last is None:

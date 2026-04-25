@@ -7,4 +7,5 @@ DIM = "#8b949e"
 GREEN = "#3fb950"
 BLUE = [0.3333, 0.4862, 0.6]
 YELLOW = "#d29922"
+ORANGE = "#f0883e"
 RED = "#f85149"
