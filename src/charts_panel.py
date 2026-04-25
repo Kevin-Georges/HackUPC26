@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 
 from constants import PANEL, BG, RED, YELLOW, GREEN, TEXT, DIM, BORDER
 from input_drivers import DriverSnapshot, DriverSuite, HumidityContaminationDriver
-from temp_chart import TempChart, _WINDOW_STEPS
+from temp_chart import TempChart, _WINDOW_DAYS
 
 _TIMER_MS = 100
 
@@ -24,8 +24,8 @@ class HumidityChart(FigureCanvasQTAgg):
         super().__init__(fig)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._t_buf = deque(maxlen=_WINDOW_STEPS)
-        self._y_buf = deque(maxlen=_WINDOW_STEPS)
+        self._t_buf = deque(maxlen=_WINDOW_DAYS)
+        self._y_buf = deque(maxlen=_WINDOW_DAYS)
         self._tick  = 0
 
         ax = fig.add_subplot(111, facecolor=BG)
@@ -43,11 +43,11 @@ class HumidityChart(FigureCanvasQTAgg):
         (self._line,) = ax.plot([], [], color="#58a6ff", lw=0.9, alpha=0.9,
                                 label="Contamination index")
 
-        ax.set_xlim(0, _WINDOW_STEPS)
+        ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(0.0, 1.0)
         self._title = ax.set_title("Humidity / Contamination — waiting…",
                                    color=TEXT, fontsize=9, pad=5)
-        ax.set_xlabel("Simulation step", color=DIM, fontsize=8)
+        ax.set_xlabel("Day", color=DIM, fontsize=8)
         ax.set_ylabel("Index (0–1)", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
         ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
@@ -65,8 +65,8 @@ class HumidityChart(FigureCanvasQTAgg):
         y_arr = np.asarray(self._y_buf)
         self._line.set_data(t_arr, y_arr)
 
-        x_end = max(_WINDOW_STEPS, self._tick)
-        self._ax.set_xlim(x_end - _WINDOW_STEPS, x_end)
+        x_end = max(_WINDOW_DAYS, self._tick)
+        self._ax.set_xlim(x_end - _WINDOW_DAYS, x_end)
 
         if val >= HumidityContaminationDriver.CRITICAL:
             label, color = "CRITICAL", RED
@@ -91,8 +91,8 @@ class UsageChart(FigureCanvasQTAgg):
         super().__init__(fig)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._t_buf    = deque(maxlen=_WINDOW_STEPS)
-        self._y_buf    = deque(maxlen=_WINDOW_STEPS)
+        self._t_buf    = deque(maxlen=_WINDOW_DAYS)
+        self._y_buf    = deque(maxlen=_WINDOW_DAYS)
         self._tick     = 0
         self._prev_load = 0.0
 
@@ -102,14 +102,14 @@ class UsageChart(FigureCanvasQTAgg):
         ax.axhline(1.0, color=DIM, lw=0.7, ls="--", alpha=0.5, label="Baseline (1.0)")
 
         (self._line,) = ax.plot([], [], color="#a371f7", lw=0.9, alpha=0.9,
-                                label="Cycles / step")
+                                label="Cycles / day")
 
-        ax.set_xlim(0, _WINDOW_STEPS)
+        ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(0.0, 2.2)
         self._title = ax.set_title("Printer Usage — waiting…",
                                    color=TEXT, fontsize=9, pad=5)
-        ax.set_xlabel("Simulation step", color=DIM, fontsize=8)
-        ax.set_ylabel("Cycles / step", color=DIM, fontsize=8)
+        ax.set_xlabel("Day", color=DIM, fontsize=8)
+        ax.set_ylabel("Cycles / day", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
         ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
                   loc="upper left")
@@ -129,11 +129,11 @@ class UsageChart(FigureCanvasQTAgg):
         y_arr = np.asarray(self._y_buf)
         self._line.set_data(t_arr, y_arr)
 
-        x_end = max(_WINDOW_STEPS, self._tick)
-        self._ax.set_xlim(x_end - _WINDOW_STEPS, x_end)
+        x_end = max(_WINDOW_DAYS, self._tick)
+        self._ax.set_xlim(x_end - _WINDOW_DAYS, x_end)
 
         self._title.set_text(
-            f"Printer Usage — {rate:.2f} cycles/step  "
+            f"Printer Usage — {rate:.2f} cycles/day  "
             f"({snap.operational_load:,.0f} total)"
         )
         self._title.set_color(TEXT)

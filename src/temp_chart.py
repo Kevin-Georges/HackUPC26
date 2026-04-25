@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from constants import PANEL, BG, RED, YELLOW, GREEN, TEXT, DIM, BORDER
 from input_drivers import DriverSnapshot, TemperatureStressDriver
 
-_WINDOW_STEPS = 300
+_WINDOW_DAYS = 300
 
 
 class TempChart(FigureCanvasQTAgg):
@@ -20,8 +20,8 @@ class TempChart(FigureCanvasQTAgg):
         super().__init__(fig)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._t_buf   = deque(maxlen=_WINDOW_STEPS)
-        self._tmp_buf = deque(maxlen=_WINDOW_STEPS)
+        self._t_buf   = deque(maxlen=_WINDOW_DAYS)
+        self._tmp_buf = deque(maxlen=_WINDOW_DAYS)
         self._tick    = 0
 
         ax = fig.add_subplot(111, facecolor=BG)
@@ -45,11 +45,11 @@ class TempChart(FigureCanvasQTAgg):
         (self._line,) = ax.plot([], [], color="#ff7043", lw=0.9, alpha=0.9,
                                 label="Ambient temp")
 
-        ax.set_xlim(0, _WINDOW_STEPS)
+        ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(10, 55)
         self._title = ax.set_title("Temperature Stress — waiting…", color=TEXT,
                                    fontsize=9, pad=5)
-        ax.set_xlabel("Simulation step", color=DIM, fontsize=8)
+        ax.set_xlabel("Day", color=DIM, fontsize=8)
         ax.set_ylabel("°C", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
         ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
@@ -67,8 +67,8 @@ class TempChart(FigureCanvasQTAgg):
         y_arr = np.asarray(self._tmp_buf)
         self._line.set_data(t_arr, y_arr)
 
-        x_end = max(_WINDOW_STEPS, self._tick)
-        self._ax.set_xlim(x_end - _WINDOW_STEPS, x_end)
+        x_end = max(_WINDOW_DAYS, self._tick)
+        self._ax.set_xlim(x_end - _WINDOW_DAYS, x_end)
 
         if temp >= TemperatureStressDriver.CRITICAL:
             label, color = "CRITICAL", RED
