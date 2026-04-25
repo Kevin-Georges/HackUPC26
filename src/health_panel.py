@@ -197,6 +197,7 @@ class HealthPanel(QFrame):
         powder_quality:          float = 1.0,
         binder_viscosity_stress: float = 0.0,
         voltage_stress:          float = 0.0,
+        maintenance_level:       float = 1.0,
     ) -> None:
         """Advance the degradation engine one day and refresh all labels."""
         self._day += 1
@@ -208,6 +209,7 @@ class HealthPanel(QFrame):
             powder_quality,
             binder_viscosity_stress,
             voltage_stress,
+            maintenance_level,
         )
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
