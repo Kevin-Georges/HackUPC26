@@ -1,19 +1,15 @@
 """
 Degradation Engine — HP Metal Jet S100 Digital Twin (Phase 1)
 
-Rule-based degradation models for the three required subsystems:
+One well-known hardware-degradation model per subsystem:
 
-    Recoater Blade    — Abrasive Wear (exponential decay)
-    Nozzle Plate      — Clogging + Thermal Fatigue (combined exponential)
-    Heating Elements  — Electrical Degradation (Weibull survival)
+    Recoater Blade    — Archard Wear Model          (tribology / abrasive contact)
+    Nozzle Plate      — Coffin-Manson Fatigue Law   (thermal-cycle fatigue + Miner's rule)
+    Heating Elements  — Arrhenius Degradation Model (thermally-activated electrical decay)
 
-Inputs
-------
-temperature  : float  — build-chamber / ambient temperature in °C
-humidity     : float  — contamination index 0–1 (0 = clean/dry, 1 = max)
-print_volume : float  — cumulative print cycles since commissioning
-
-All models are deterministic: same inputs → same outputs.
+The engine is stateful: call tick() once per simulation step.
+Damage for each component accumulates across ticks so the full
+degradation history is preserved in the engine's state.
 """
 
 from __future__ import annotations
@@ -21,16 +17,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-_OPTIMAL_TEMP_LOW  = 18.0   # °C — lower bound of the safe operating band
-_OPTIMAL_TEMP_HIGH = 25.0   # °C — upper bound of the safe operating band
+# Physical constants
+_BOLTZMANN_EV = 8.617e-5    # Boltzmann constant in eV/K
+_KELVIN       = 273.15      # °C → K offset
 
-
-def _temp_stress(temperature: float) -> float:
-    """Multiplicative stress factor: 1.0 inside optimal band, rises outside it."""
-    if _OPTIMAL_TEMP_LOW <= temperature <= _OPTIMAL_TEMP_HIGH:
-        return 1.0
-    excess = max(temperature - _OPTIMAL_TEMP_HIGH, _OPTIMAL_TEMP_LOW - temperature)
-    return 1.0 + 0.05 * excess
+_OPTIMAL_TEMP = 21.5        # °C — midpoint of the safe operating band (18–25 °C)
 
 
 @dataclass(frozen=True)
@@ -44,73 +35,140 @@ class ComponentHealth:
 
 
 class DegradationEngine:
-    """Compute component health given current environmental and operational inputs."""
+    """Stateful Phase 1 Logic Engine.  Call tick() once per simulation step."""
 
-    # ── Recoater Blade (Subsystem A — Abrasive Wear) ───────────────────────────
-    # Each cycle drags the blade through metal powder.  Humidity causes powder
-    # clumping which grinds the edge harder; excess temperature softens the
-    # blade material, amplifying the abrasion rate.
-    #   Health = exp(-k_blade * cycles * (1 + amp_H * humidity) * temp_stress)
-    _BLADE_BASE_RATE    = 8.0e-5   # wear rate per cycle at nominal conditions
-    _BLADE_HUMIDITY_AMP = 2.5      # humidity multiplier on wear rate
+    # ── Model 1 — Archard Wear (Recoater Blade) ────────────────────────────────
+    #
+    # W = K * F * s / H
+    #
+    #   W  — wear volume (normalised, 0→W_max = failure)
+    #   K  — dimensionless wear coefficient (material pair: tool-steel blade / SS powder)
+    #   F  — normal force (N); rises with humidity because wet powder clumps and
+    #         resists the blade, increasing the contact force
+    #   s  — total sliding distance (m) = cycles × stroke_length
+    #   H  — Vickers hardness of the blade material (MPa); decreases linearly
+    #         above the optimal temperature as the steel softens
+    #
+    # Reference: Archard, J.F. (1953). "Contact and Rubbing of Flat Surfaces."
+    #            Journal of Applied Physics, 24(8), 981–988.
+    _ARCHARD_K            = 1.2e-4   # wear coefficient for tool-steel on metal powder
+    _ARCHARD_F0           = 10.0     # baseline normal force (N) at zero contamination
+    _ARCHARD_HUMIDITY_K   = 5.0      # force amplification factor per unit humidity (0–1)
+    _ARCHARD_H0           = 800.0    # baseline hardness (MPa) at optimal temperature
+    _ARCHARD_H_TEMP_SLOPE = 8.0      # hardness reduction rate (MPa per °C above optimal)
+    _ARCHARD_STROKE       = 0.35     # blade stroke per cycle (m)
+    _ARCHARD_W_MAX        = 0.015    # normalised wear volume at end-of-life
 
-    # ── Nozzle Plate (Subsystem B — Clogging + Thermal Fatigue) ───────────────
-    # Two independent damage mechanisms accumulate additively in the exponent:
-    #   clog damage    ∝ humidity × cycles  (moisture/contamination blocks jets)
-    #   thermal damage ∝ cycles × temp_stress  (fatigue from heating/cooling)
-    #   Health = exp(-(clog_damage + thermal_damage))
-    _NOZZLE_CLOG_RATE    = 0.20    # clog damage per humidity unit per 10 k cycles
-    _NOZZLE_THERMAL_RATE = 1.5e-5  # thermal fatigue per cycle at optimal temp
-    _NOZZLE_THERMAL_AMP  = 3.0     # amplifier applied when temperature is stressed
+    # ── Model 2 — Coffin-Manson Fatigue Law (Nozzle Plate) ────────────────────
+    #
+    # N_f = C * (ΔT_eff)^(-m)            — cycles to failure at thermal range ΔT_eff
+    # D   += 1 / N_f   per cycle         — Miner's linear damage accumulation rule
+    # D = 1  →  failure
+    #
+    #   ΔT_eff  — effective thermal strain range (°C):
+    #               temperature deviation from optimal
+    #             + contamination contribution (humidity amplifies binder viscosity
+    #               variation, adding an equivalent thermal strain)
+    #   C, m    — Coffin-Manson material constants for the nozzle-plate alloy
+    #
+    # Reference: Coffin, L.F. (1954). Trans. ASME, 76, 931–950.
+    #            Manson, S.S. (1953). NACA TN 2933.
+    _CM_BASE_DT     = 5.0       # intrinsic thermal cycle amplitude per firing (°C)
+    _CM_AMBIENT_K   = 0.5       # fraction of ambient deviation added to ΔT
+    _CM_HUMIDITY_K  = 2.0       # humidity → equivalent ΔT contribution (°C per unit)
+    _CM_C           = 500_000.0 # material constant tuned for ~17 k cycle life at nominal
+    _CM_M           = 2.0       # fatigue ductility exponent
 
-    # ── Heating Elements (Subsystem C — Weibull Electrical Degradation) ────────
-    # Classic two-parameter Weibull survival function S(t) = exp(-(t/η)^β).
-    # Cold ambient forces elements to work harder, shortening the characteristic
-    # life η proportionally to the temperature deficit.
-    #   Health = exp(-(cycles / eff_life)^shape)
-    _HEATER_CHAR_LIFE    = 18_000.0  # η — characteristic life in cycles
-    _HEATER_SHAPE        = 2.2       # β — shape parameter (>1 = wear-out regime)
-    _HEATER_COLD_PENALTY = 0.025     # fractional life reduction per °C below optimal
+    # ── Model 3 — Arrhenius Degradation Model (Heating Elements) ──────────────
+    #
+    # Degradation rate:   r(T) = A * exp(-Ea / (k_B * T_K))
+    # Lifetime at T:      L(T) = L_ref * exp( (Ea/k_B) * (1/T_K - 1/T_ref_K) )
+    # Damage per cycle:   d    = 1 / L(T)
+    #
+    #   Ea      — activation energy (eV); represents the energy barrier for
+    #             oxide-layer growth / electromigration in the resistive element
+    #   T_K     — absolute temperature of the element (K)
+    #             = ambient + self-heating offset (heating elements run hotter
+    #               than ambient; a cold room forces more self-heating → higher T_K)
+    #   L_ref   — characteristic life (cycles) at the reference temperature
+    #
+    # Reference: Arrhenius, S. (1889). Z. Phys. Chem. 4, 226–248.
+    #            MIL-HDBK-217F — Reliability Prediction of Electronic Equipment.
+    _ARR_EA           = 0.85      # activation energy (eV) — metal-oxide resistor
+    _ARR_T_REF_C      = 25.0      # reference temperature (°C)
+    _ARR_L_REF        = 20_000.0  # characteristic life at T_ref (cycles)
+    _ARR_SELF_HEAT_K  = 1.5       # extra self-heating per °C below optimal (°C/°C)
 
-    def compute(
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def __init__(self) -> None:
+        self._blade_wear      = 0.0   # Archard: cumulative normalised wear volume
+        self._nozzle_damage   = 0.0   # Coffin-Manson: cumulative Miner's damage (0→1)
+        self._heater_damage   = 0.0   # Arrhenius: cumulative damage fraction (0→1)
+        self._prev_load       = 0.0   # last operational_load to derive delta_cycles
+
+    def tick(
         self,
-        temperature:  float,
-        humidity:     float,
-        print_volume: float,
+        temperature:      float,
+        humidity:         float,
+        operational_load: float,
     ) -> list[ComponentHealth]:
-        """Return health for each component given current conditions.
+        """Advance one simulation step and return updated health values.
 
         Parameters
         ----------
-        temperature  : °C — build-chamber temperature
-        humidity     : 0–1 — contamination / moisture index
-        print_volume : cumulative print cycles
+        temperature      : °C  — build-chamber / ambient temperature
+        humidity         : 0–1 — contamination / moisture index
+        operational_load : cumulative print cycles (monotonically increasing)
         """
-        tf = _temp_stress(temperature)
+        delta = max(0.0, operational_load - self._prev_load)
+        self._prev_load = operational_load
 
-        # Recoater Blade
-        blade_h = math.exp(
-            -self._BLADE_BASE_RATE
-            * print_volume
-            * (1.0 + self._BLADE_HUMIDITY_AMP * humidity)
-            * tf
-        )
+        self._blade_wear    += self._archard_increment(temperature, humidity, delta)
+        self._nozzle_damage += self._coffin_manson_increment(temperature, humidity, delta)
+        self._heater_damage += self._arrhenius_increment(temperature, delta)
 
-        # Nozzle Plate
-        clog    = self._NOZZLE_CLOG_RATE * humidity * (print_volume / 10_000.0)
-        thermal = self._NOZZLE_THERMAL_RATE * print_volume * tf * self._NOZZLE_THERMAL_AMP
-        nozzle_h = math.exp(-(clog + thermal))
-
-        # Heating Elements (Weibull)
-        cold_excess = max(0.0, _OPTIMAL_TEMP_LOW - temperature)
-        eff_life    = self._HEATER_CHAR_LIFE * (1.0 - self._HEATER_COLD_PENALTY * cold_excess)
-        heater_h    = math.exp(-(print_volume / max(eff_life, 1.0)) ** self._HEATER_SHAPE)
-
-        def _pct(h: float) -> int:
-            return round(max(0.0, min(1.0, h)) * 100)
+        def _pct(dmg: float, capacity: float) -> int:
+            return round(max(0.0, min(1.0, 1.0 - dmg / capacity)) * 100)
 
         return [
-            ComponentHealth("Recoater Blade",  _pct(blade_h)),
-            ComponentHealth("Nozzle Plate",    _pct(nozzle_h)),
-            ComponentHealth("Heating Elements", _pct(heater_h)),
+            ComponentHealth("Recoater Blade",   _pct(self._blade_wear,    self._ARCHARD_W_MAX)),
+            ComponentHealth("Nozzle Plate",      _pct(self._nozzle_damage, 1.0)),
+            ComponentHealth("Heating Elements",  _pct(self._heater_damage, 1.0)),
         ]
+
+    # ── Private model calculations ─────────────────────────────────────────────
+
+    def _archard_increment(self, temperature: float, humidity: float, cycles: float) -> float:
+        """W = K * F * s / H  — wear volume for this cycle increment."""
+        F = self._ARCHARD_F0 * (1.0 + self._ARCHARD_HUMIDITY_K * humidity)
+        T_excess = max(0.0, temperature - _OPTIMAL_TEMP)
+        H = max(50.0, self._ARCHARD_H0 - self._ARCHARD_H_TEMP_SLOPE * T_excess)
+        s = self._ARCHARD_STROKE * cycles
+        return self._ARCHARD_K * F * s / H
+
+    def _coffin_manson_increment(self, temperature: float, humidity: float, cycles: float) -> float:
+        """Miner's damage = cycles / N_f,  N_f = C * ΔT_eff^(-m).
+
+        ΔT_eff = base firing amplitude + ambient deviation contribution + humidity strain.
+        The base term ensures ambient temperature fluctuations are a modifier,
+        not the sole driver of fatigue damage.
+        """
+        delta_T = (
+            self._CM_BASE_DT
+            + self._CM_AMBIENT_K * abs(temperature - _OPTIMAL_TEMP)
+            + self._CM_HUMIDITY_K * humidity
+        )
+        N_f = self._CM_C * (delta_T ** -self._CM_M)
+        return cycles / max(N_f, 1.0)
+
+    def _arrhenius_increment(self, temperature: float, cycles: float) -> float:
+        """Lifetime fraction consumed = cycles / L(T_element)."""
+        cold_deficit = max(0.0, _OPTIMAL_TEMP - temperature)
+        T_element_C  = temperature + self._ARR_SELF_HEAT_K * cold_deficit
+        T_K          = T_element_C + _KELVIN
+        T_ref_K      = self._ARR_T_REF_C + _KELVIN
+        lifetime = self._ARR_L_REF * math.exp(
+            (self._ARR_EA / _BOLTZMANN_EV) * (1.0 / T_K - 1.0 / T_ref_K)
+        )
+        return cycles / max(lifetime, 1.0)

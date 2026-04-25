@@ -30,17 +30,11 @@ def _health_color(pct_str: str) -> str:
 
 class HealthPanel(QFrame):
 
-    _engine = DegradationEngine()
-
-    def __init__(
-        self,
-        temperature:  float = 21.0,
-        humidity:     float = 0.10,
-        print_volume: float = 5_000.0,
-    ):
+    def __init__(self):
         super().__init__()
 
-        components = self._engine.compute(temperature, humidity, print_volume)
+        self._engine = DegradationEngine()
+        components = self._engine.tick(21.0, 0.0, 0.0)
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
         lay = QVBoxLayout(self)
@@ -90,12 +84,12 @@ class HealthPanel(QFrame):
 
     def update(
         self,
-        temperature:  float,
-        humidity:     float,
-        print_volume: float,
+        temperature:      float,
+        humidity:         float,
+        operational_load: float,
     ) -> None:
-        """Recompute health from the degradation engine and refresh all labels."""
-        components = self._engine.compute(temperature, humidity, print_volume)
+        """Advance the degradation engine one tick and refresh all labels."""
+        components = self._engine.tick(temperature, humidity, operational_load)
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
         for i, (_, pct) in enumerate(self._ROWS):
