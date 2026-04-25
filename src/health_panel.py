@@ -151,6 +151,7 @@ class HealthPanel(QFrame):
 
         self._status_labels: list[QLabel] = []
         self._health_bars: list[HealthBarWidget] = []
+        self._name_labels: list[QLabel] = []
 
         for row, (name, pct) in enumerate(self._ROWS, 1):
             color  = _health_color(pct)
@@ -160,6 +161,7 @@ class HealthPanel(QFrame):
             name_lbl.setFont(QFont("Segoe UI", 8))
             name_lbl.setStyleSheet(f"color:{TEXT}; border:none;")
             self._grid.addWidget(name_lbl, row, 0)
+            self._name_labels.append(name_lbl)
 
             status_lbl = QLabel(status)
             status_lbl.setFont(QFont("Segoe UI", 8))
@@ -173,6 +175,17 @@ class HealthPanel(QFrame):
             self._health_bars.append(bar)
 
         lay.addLayout(self._grid)
+
+    def highlight(self, label: str) -> None:
+        """Highlight the row matching *label*; clear all others."""
+        for i, (name, _) in enumerate(self._ROWS):
+            if name == label:
+                self._name_labels[i].setStyleSheet(
+                    f"color:{TEXT}; border:none; background: rgba(100,160,255,45);"
+                    f" border-radius:3px; padding-left:2px;"
+                )
+            else:
+                self._name_labels[i].setStyleSheet(f"color:{TEXT}; border:none;")
 
     def reset(self) -> None:
         self._engine = DegradationEngine()

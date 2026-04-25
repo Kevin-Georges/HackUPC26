@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         charts.reset_requested.connect(health.reset)
         charts.reset_requested.connect(self._open_csv)
         health.component_failed.connect(self._on_component_failed)
+        viewer.component_selected.connect(health.highlight)
 
         self._csv_file   = None
         self._csv_writer = None
