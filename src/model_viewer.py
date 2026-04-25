@@ -7,12 +7,63 @@ from OpenGL.GLU import gluPerspective
 import trimesh
 from constants import BLUE
 
+# ── GLSL sources ──────────────────────────────────────────────────────────────
+_VERT_SRC = """
+#version 120
+attribute vec3 aPos;
+void main() {
+    gl_Position = gl_ModelViewProjectionMatrix * vec4(aPos, 1.0);
+}
+"""
+
+_FRAG_SRC = """
+#version 120
+uniform bool  uUseHighlight;
+uniform vec3  uHighlightColor;
+uniform vec3  uDefaultColor;
+void main() {
+    if (uUseHighlight)
+        gl_FragColor = vec4(uHighlightColor, 1.0);
+    else
+        gl_FragColor = vec4(uDefaultColor, 1.0);
+}
+"""
+
+# ── Name-translation: health-panel label → glb node name ─────────────────────
+_LABEL_TO_NODE: dict[str, str] = {
+    "Nozzle Plate":      "Nozzle Plates",
+    "Recoater Blade":    "Recoater Roller",
+    "Heating Elements":  "Heating Lamps",
+    "Vacuum Pump":       "Vacuum Pump",
+    "Vacuum Area":       "Vacuum Area",
+}
+
+_STATUS_TO_RGB: dict[str, tuple[float, float, float]] = {
+    "FUNCTIONAL": (0.247, 0.725, 0.314),
+    "DEGRADED":   (0.824, 0.600, 0.133),
+    "CRITICAL":   (0.973, 0.318, 0.286),
+}
+
+
+def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:
+    """Convert HealthPanel._ROWS into {glb_node_name: (r, g, b)}."""
+    result = {}
+    for label, status, _pct, _color in health_rows:
+        node = _LABEL_TO_NODE.get(label)
+        rgb = _STATUS_TO_RGB.get(status)
+        if node and rgb:
+            result[node] = rgb
+    return result
+
 
 class ModelViewer(QOpenGLWidget):
-    """Renders a GLB mesh as a green wireframe.
+    """Renders a GLB mesh.
 
-    Left-drag  → rotate around X/Y
-    Right-drag → rotate around Z
+    Non-highlighted nodes → blue wireframe.
+    Highlighted nodes     → solid fill in status color.
+
+    Left-drag  → rotate X/Y
+    Right-drag → rotate Z
     Scroll     → zoom
     """
 
@@ -25,44 +76,92 @@ class ModelViewer(QOpenGLWidget):
         self._dist = 5.0
         self._last = None
         self._ready = False
-        self._vbo = 0
-        self._n_draw = 0
+        self._meshes: list[tuple[int, int, str]] = []  # (vbo, n_verts, node_name)
+        self._prog = 0
+        self._component_colors: dict[str, tuple[float, float, float]] = {}
         self.setMinimumSize(400, 400)
+
+    def set_component_colors(self, colors: dict[str, tuple[float, float, float]]):
+        self._component_colors = colors
+        self.update()
+
+    # ── GL lifecycle ──────────────────────────────────────────────────────────
 
     def initializeGL(self):
         glClearColor(0.05, 0.07, 0.09, 1.0)
         glEnable(GL_DEPTH_TEST)
         glLineWidth(1.0)
+        self._build_shader()
         self._load_model()
+
+    def _build_shader(self):
+        def compile_shader(src, kind):
+            sh = glCreateShader(kind)
+            glShaderSource(sh, src)
+            glCompileShader(sh)
+            if not glGetShaderiv(sh, GL_COMPILE_STATUS):
+                raise RuntimeError(glGetShaderInfoLog(sh).decode())
+            return sh
+
+        vert = compile_shader(_VERT_SRC, GL_VERTEX_SHADER)
+        frag = compile_shader(_FRAG_SRC, GL_FRAGMENT_SHADER)
+        prog = glCreateProgram()
+        glAttachShader(prog, vert)
+        glAttachShader(prog, frag)
+        glBindAttribLocation(prog, 0, "aPos")
+        glLinkProgram(prog)
+        if not glGetProgramiv(prog, GL_LINK_STATUS):
+            raise RuntimeError(glGetProgramInfoLog(prog).decode())
+        glDeleteShader(vert)
+        glDeleteShader(frag)
+        self._prog = prog
 
     def _load_model(self):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                mesh = trimesh.load(self.model_path, force="mesh")
+                scene = trimesh.load(self.model_path)
 
-            if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
-                print("[ModelViewer] not a valid Trimesh after load")
+            if isinstance(scene, trimesh.Trimesh):
+                meshes_by_node: dict[str, trimesh.Trimesh] = {"": scene}
+            elif isinstance(scene, trimesh.Scene):
+                meshes_by_node = {}
+                for node_name in scene.graph.nodes_geometry:
+                    transform, geo_name = scene.graph[node_name]
+                    if geo_name is None or geo_name not in scene.geometry:
+                        continue
+                    transformed = scene.geometry[geo_name].copy()
+                    transformed.apply_transform(transform)
+                    meshes_by_node[node_name] = transformed
+            else:
+                print(f"[ModelViewer] unexpected type: {type(scene)}")
                 return
 
-            c = mesh.centroid
-            s = float(mesh.extents.max()) or 1.0
+            valid = {k: v for k, v in meshes_by_node.items() if len(v.faces) > 0}
+            if not valid:
+                print("[ModelViewer] no geometry found")
+                return
 
-            flat = ((mesh.vertices[mesh.faces.reshape(-1)] - c) / s * 1.6).astype(
-                np.float32
-            )
-            self._n_draw = len(flat)
+            all_verts = np.concatenate([m.vertices for m in valid.values()])
+            c = all_verts.mean(axis=0)
+            s = float((all_verts.max(axis=0) - all_verts.min(axis=0)).max()) or 1.0
 
-            self._vbo = int(glGenBuffers(1))
-            glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-            glBufferData(GL_ARRAY_BUFFER, flat.nbytes, flat, GL_STATIC_DRAW)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            for node_name, mesh in valid.items():
+                flat = (
+                    (mesh.vertices[mesh.faces.reshape(-1)] - c) / s * 1.6
+                ).astype(np.float32)
+                vbo = int(glGenBuffers(1))
+                glBindBuffer(GL_ARRAY_BUFFER, vbo)
+                glBufferData(GL_ARRAY_BUFFER, flat.nbytes, flat, GL_STATIC_DRAW)
+                glBindBuffer(GL_ARRAY_BUFFER, 0)
+                self._meshes.append((vbo, len(flat), node_name))
 
             self._ready = True
             print(
-                f"[ModelViewer] {len(mesh.vertices):,} verts  "
-                f"{len(mesh.faces):,} faces  extents={mesh.extents.round(2)}"
+                f"[ModelViewer] {len(valid)} nodes loaded  "
+                f"({sum(len(m.faces) for m in valid.values()):,} faces total)"
             )
+            print(f"[ModelViewer] node names: {sorted(valid.keys())}")
         except Exception as exc:
             import traceback
 
@@ -84,17 +183,7 @@ class ModelViewer(QOpenGLWidget):
         glRotatef(self.rot_y, 0, 1, 0)
         glRotatef(self.rot_z, 0, 0, 1)
 
-        if self._ready:
-            glColor3f(*BLUE)
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-            glEnableClientState(GL_VERTEX_ARRAY)
-            glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
-            glVertexPointer(3, GL_FLOAT, 0, None)
-            glDrawArrays(GL_TRIANGLES, 0, self._n_draw)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
-            glDisableClientState(GL_VERTEX_ARRAY)
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-        else:
+        if not self._ready:
             glBegin(GL_LINES)
             glColor3f(1.0, 0.2, 0.2)
             glVertex3f(0, 0, 0)
@@ -106,6 +195,35 @@ class ModelViewer(QOpenGLWidget):
             glVertex3f(0, 0, 0)
             glVertex3f(0, 0, 1)
             glEnd()
+            return
+
+        glUseProgram(self._prog)
+        loc_use = glGetUniformLocation(self._prog, "uUseHighlight")
+        loc_col = glGetUniformLocation(self._prog, "uHighlightColor")
+        loc_def = glGetUniformLocation(self._prog, "uDefaultColor")
+        glUniform3f(loc_def, *BLUE)
+
+        for vbo, n_verts, node_name in self._meshes:
+            rgb = self._component_colors.get(node_name)
+            if rgb is not None:
+                glUniform1i(loc_use, 1)
+                glUniform3f(loc_col, *rgb)
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+            else:
+                glUniform1i(loc_use, 0)
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+
+            glEnableVertexAttribArray(0)
+            glBindBuffer(GL_ARRAY_BUFFER, vbo)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+            glDrawArrays(GL_TRIANGLES, 0, n_verts)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glDisableVertexAttribArray(0)
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        glUseProgram(0)
+
+    # ── Input ─────────────────────────────────────────────────────────────────
 
     def mousePressEvent(self, e):
         self._last = e.pos()
