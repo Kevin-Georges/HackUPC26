@@ -2,7 +2,11 @@ from collections import deque
 
 import numpy as np
 from PyQt5.QtCore import QTimer, pyqtSignal
-from PyQt5.QtWidgets import QSizePolicy, QTabWidget
+from PyQt5.QtWidgets import (
+    QSizePolicy, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel,
+)
+from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
@@ -156,36 +160,128 @@ QTabBar::tab:hover:!selected {{
 """
 
 
-class ChartsPanel(QTabWidget):
-    """Tabbed widget holding all three live driver charts.
+_BTN_STYLE = f"""
+QPushButton {{
+    background: {BG};
+    color: {TEXT};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    padding: 3px 12px;
+    font-size: 8pt;
+}}
+QPushButton:hover {{ background: {PANEL}; color: {TEXT}; }}
+QPushButton:pressed {{ background: {BORDER}; }}
+QPushButton:disabled {{ color: {DIM}; }}
+"""
+
+
+class ChartsPanel(QWidget):
+    """Charts + playback controls.
 
     Owns the shared DriverSuite and QTimer so all charts advance in lockstep.
     Emits snapshot_ready(DriverSnapshot) on every tick for external consumers.
+
+    Speed steps: 0.25×  0.5×  1×  2×  4×  8×
+    A fractional accumulator means slow speeds skip ticks smoothly rather than
+    firing at a fixed reduced rate.
     """
 
     snapshot_ready = pyqtSignal(object)
 
+    _SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
+    _SPEED_IDX_DEFAULT = 2  # 1×
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(_TAB_STYLE)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        # ── Tab widget ────────────────────────────────────────────────────────
+        tabs = QTabWidget()
+        tabs.setStyleSheet(_TAB_STYLE)
 
         self._temp_chart     = TempChart()
         self._humidity_chart = HumidityChart()
         self._usage_chart    = UsageChart()
 
-        self.addTab(self._temp_chart,     "Temperature")
-        self.addTab(self._humidity_chart, "Humidity")
-        self.addTab(self._usage_chart,    "Printer Usage")
+        tabs.addTab(self._temp_chart,     "Temperature")
+        tabs.addTab(self._humidity_chart, "Humidity")
+        tabs.addTab(self._usage_chart,    "Printer Usage")
 
-        self._suite = DriverSuite(seed=42)
+        root.addWidget(tabs)
+
+        # ── Playback controls ─────────────────────────────────────────────────
+        bar = QHBoxLayout()
+        bar.setSpacing(6)
+
+        self._btn_pause = QPushButton("⏸  Pause")
+        self._btn_pause.setStyleSheet(_BTN_STYLE)
+        self._btn_pause.clicked.connect(self._toggle_pause)
+
+        btn_slow = QPushButton("◀◀  Slower")
+        btn_slow.setStyleSheet(_BTN_STYLE)
+        btn_slow.clicked.connect(self._slower)
+
+        btn_fast = QPushButton("▶▶  Faster")
+        btn_fast.setStyleSheet(_BTN_STYLE)
+        btn_fast.clicked.connect(self._faster)
+
+        self._speed_label = QLabel("1×")
+        self._speed_label.setFont(QFont("Segoe UI", 8))
+        self._speed_label.setStyleSheet(f"color:{TEXT};")
+
+        bar.addStretch()
+        bar.addWidget(btn_slow)
+        bar.addWidget(self._btn_pause)
+        bar.addWidget(btn_fast)
+        bar.addWidget(self._speed_label)
+        bar.addStretch()
+
+        root.addLayout(bar)
+
+        # ── Simulation state ──────────────────────────────────────────────────
+        self._suite      = DriverSuite(seed=42)
+        self._paused     = False
+        self._speed_idx  = self._SPEED_IDX_DEFAULT
+        self._tick_acc   = 0.0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(_TIMER_MS)
 
+    # ── Playback control slots ────────────────────────────────────────────────
+
+    def _toggle_pause(self) -> None:
+        self._paused = not self._paused
+        self._btn_pause.setText("▶  Resume" if self._paused else "⏸  Pause")
+
+    def _slower(self) -> None:
+        if self._speed_idx > 0:
+            self._speed_idx -= 1
+            self._update_speed_label()
+
+    def _faster(self) -> None:
+        if self._speed_idx < len(self._SPEEDS) - 1:
+            self._speed_idx += 1
+            self._update_speed_label()
+
+    def _update_speed_label(self) -> None:
+        spd = self._SPEEDS[self._speed_idx]
+        self._speed_label.setText(f"{spd:g}×")
+
+    # ── Tick ──────────────────────────────────────────────────────────────────
+
     def _on_tick(self) -> None:
-        snap = self._suite.tick()
-        self._temp_chart.push(snap)
-        self._humidity_chart.push(snap)
-        self._usage_chart.push(snap)
-        self.snapshot_ready.emit(snap)
+        if self._paused:
+            return
+        self._tick_acc += self._SPEEDS[self._speed_idx]
+        n = int(self._tick_acc)
+        self._tick_acc -= n
+        for _ in range(n):
+            snap = self._suite.tick()
+            self._temp_chart.push(snap)
+            self._humidity_chart.push(snap)
+            self._usage_chart.push(snap)
+            self.snapshot_ready.emit(snap)

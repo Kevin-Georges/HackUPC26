@@ -184,9 +184,11 @@ class ModelViewer(QOpenGLWidget):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         glTranslatef(0.0, 0.0, -self._dist)
+
         glRotatef(self.rot_x, 1, 0, 0)
         glRotatef(self.rot_y, 0, 1, 0)
         glRotatef(self.rot_z, 0, 0, 1)
+        glTranslatef(0.4, 0.0, 0.0)
 
         if not self._ready:
             glBegin(GL_LINES)
