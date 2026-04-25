@@ -41,7 +41,8 @@ class MainWindow(QMainWindow):
         right = QVBoxLayout()
         right.setSpacing(8)
 
-        right.addWidget(ChartsPanel(), stretch=2)
+        charts = ChartsPanel()
+        right.addWidget(charts, stretch=2)
 
         health = HealthPanel()
         health.setStyleSheet(
@@ -49,8 +50,20 @@ class MainWindow(QMainWindow):
         )
         right.addWidget(health, stretch=1)
 
-        viewer.set_component_colors(build_color_map(HealthPanel._ROWS))
+        viewer.set_component_colors(build_color_map(health._ROWS))
+
+        self._health = health
+        self._viewer = viewer
+        charts.snapshot_ready.connect(self._on_snap)
 
         rw = QWidget()
         rw.setLayout(right)
         root.addWidget(rw, stretch=2)
+
+    def _on_snap(self, snap) -> None:
+        self._health.update(
+            snap.temperature_stress,
+            snap.humidity_contamination,
+            snap.operational_load,
+        )
+        self._viewer.set_component_colors(build_color_map(self._health._ROWS))

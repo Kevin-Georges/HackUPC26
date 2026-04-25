@@ -1,7 +1,7 @@
 from collections import deque
 
 import numpy as np
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, pyqtSignal
 from PyQt5.QtWidgets import QSizePolicy, QTabWidget
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -171,7 +171,10 @@ class ChartsPanel(QTabWidget):
     """Tabbed widget holding all three live driver charts.
 
     Owns the shared DriverSuite and QTimer so all charts advance in lockstep.
+    Emits snapshot_ready(DriverSnapshot) on every tick for external consumers.
     """
+
+    snapshot_ready = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -196,3 +199,4 @@ class ChartsPanel(QTabWidget):
         self._temp_chart.push(snap)
         self._humidity_chart.push(snap)
         self._usage_chart.push(snap)
+        self.snapshot_ready.emit(snap)
