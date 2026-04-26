@@ -27,6 +27,10 @@ _KELVIN       = 273.15      # °C → K offset
 _OPTIMAL_TEMP = 21.5        # °C — midpoint of the safe operating band (18–25 °C)
 
 
+def _to_pct(dmg: float, capacity: float) -> int:
+    return round(max(0.0, min(1.0, 1.0 - dmg / capacity)) * 100)
+
+
 @dataclass(frozen=True)
 class ComponentHealth:
     name:       str
@@ -115,6 +119,7 @@ class DegradationEngine:
                                    # to MTBF, so safe-life replacement at ~2 000–3 000 builds
     _ARR_SELF_HEAT_K  = 1.5       # extra self-heating per °C below optimal (°C/°C)
     _ARR_VOLTAGE_K    = 15.0      # equivalent temperature rise per unit voltage stress (°C)
+    _ARR_EA_OVER_KB   = _ARR_EA / _BOLTZMANN_EV  # 9 866 K — precomputed activation ratio
 
     # ── Model 4 — Paris Law Fatigue (Drive Motor & Rails) ─────────────────────
     #
@@ -230,29 +235,30 @@ class DegradationEngine:
         ins_health_frac = max(0.0, 1.0 - self._ins_damage / self._INS_DAMAGE_MAX)
         heater_amp      = 1.0 + self._INS_HEATER_AMP * (1.0 - ins_health_frac)
 
+        # Moisture ingress update (Fickian) — kept in tick() so _insulation_increment is pure
+        self._ins_moisture += self._INS_D_MOISTURE * (humidity - self._ins_moisture)
+        self._ins_moisture  = max(0.0, min(1.0, self._ins_moisture))
+
         self._blade_wear    += self._archard_increment(temperature, humidity, powder_quality, delta)
         self._nozzle_damage += self._coffin_manson_increment(temperature, humidity, powder_quality, binder_viscosity_stress, delta)
         self._heater_damage += self._arrhenius_increment(temperature, voltage_stress, delta) * heater_amp
         self._motor_crack   += self._paris_increment(humidity, delta)
-        self._fouling       += self._kern_seaton_increment(humidity, maintenance_level, delta)
-        self._ins_damage    += self._insulation_increment(temperature, humidity, delta)
-
-        def _pct(dmg: float, capacity: float) -> int:
-            return round(max(0.0, min(1.0, 1.0 - dmg / capacity)) * 100)
+        self._fouling        = max(0.0, self._fouling + self._kern_seaton_increment(humidity, maintenance_level, delta))
+        self._ins_damage    += self._insulation_increment(temperature, delta)
 
         return [
-            ComponentHealth("Recoater Blade", _pct(self._blade_wear, self._ARCHARD_W_MAX),
+            ComponentHealth("Recoater Blade", _to_pct(self._blade_wear, self._ARCHARD_W_MAX),
                 metrics={"wear_volume": round(self._blade_wear, 6),
                          "wear_pct_of_limit": round(self._blade_wear / self._ARCHARD_W_MAX * 100, 2)}),
-            ComponentHealth("Nozzle Plate", _pct(self._nozzle_damage, 1.0),
+            ComponentHealth("Nozzle Plate", _to_pct(self._nozzle_damage, 1.0),
                 metrics={"fatigue_damage": round(self._nozzle_damage, 6)}),
-            ComponentHealth("Heating Elements", _pct(self._heater_damage, 1.0),
+            ComponentHealth("Heating Elements", _to_pct(self._heater_damage, 1.0),
                 metrics={"degradation_fraction": round(self._heater_damage, 6)}),
-            ComponentHealth("Drive Motor & Rails", _pct(self._motor_crack, self._PARIS_A_CRIT),
+            ComponentHealth("Drive Motor & Rails", _to_pct(self._motor_crack, self._PARIS_A_CRIT),
                 metrics={"crack_length_norm": round(self._motor_crack, 6)}),
-            ComponentHealth("Cleaning & Thermal Iface", _pct(self._fouling, self._KS_RF_MAX),
+            ComponentHealth("Cleaning & Thermal Iface", _to_pct(self._fouling, self._KS_RF_MAX),
                 metrics={"fouling_resistance": round(self._fouling, 6)}),
-            ComponentHealth("Insulation & Sensors", _pct(self._ins_damage, self._INS_DAMAGE_MAX),
+            ComponentHealth("Insulation & Sensors", _to_pct(self._ins_damage, self._INS_DAMAGE_MAX),
                 metrics={"moisture_content": round(self._ins_moisture, 6),
                          "thermal_damage": round(self._ins_damage, 6)}),
         ]
@@ -315,17 +321,12 @@ class DegradationEngine:
         phi_r = self._KS_PHI_R_K * maintenance_level
         return phi_d - phi_r * self._fouling
 
-    def _insulation_increment(self, temperature: float, humidity: float, cycles: float) -> float:
-        """Combined moisture-diffusion and thermal-cracking damage per day.
+    def _insulation_increment(self, temperature: float, cycles: float) -> float:
+        """Combined moisture and thermal-cracking damage per day.
 
-        Fickian moisture ingress drives the insulation's moisture content toward
-        the ambient humidity equilibrium.  Temperature deviations from optimal
-        open micro-cracks proportional to load cycling (more firings per day →
-        more thermal expansions and contractions).
+        Moisture state is updated in tick() before this is called, so
+        self._ins_moisture already reflects the current Fickian equilibrium.
         """
-        self._ins_moisture += self._INS_D_MOISTURE * (humidity - self._ins_moisture)
-        self._ins_moisture  = max(0.0, min(1.0, self._ins_moisture))
-
         thermal_cracking = self._INS_K_TEMP * abs(temperature - _OPTIMAL_TEMP) * cycles
         moisture_damage  = self._INS_K_MOIST * self._ins_moisture
         return moisture_damage + thermal_cracking
@@ -347,6 +348,6 @@ class DegradationEngine:
         T_K     = T_element_C + _KELVIN
         T_ref_K = self._ARR_T_REF_C + _KELVIN
         lifetime = self._ARR_L_REF * math.exp(
-            (self._ARR_EA / _BOLTZMANN_EV) * (1.0 / T_K - 1.0 / T_ref_K)
+            self._ARR_EA_OVER_KB * (1.0 / T_K - 1.0 / T_ref_K)
         )
         return cycles / max(lifetime, 1.0)

@@ -1,4 +1,3 @@
-import colorsys
 import warnings
 import numpy as np
 from PyQt5.QtWidgets import QOpenGLWidget
@@ -6,7 +5,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from OpenGL.GL import *  # noqa: F401,F403
 from OpenGL.GLU import gluPerspective, gluUnProject
 import trimesh
-from constants import BLUE
+from constants import BLUE, GREEN, LIGHT_GREEN, RED
 
 # ── GLSL sources ──────────────────────────────────────────────────────────────
 _VERT_SRC = """
@@ -48,14 +47,25 @@ _NODE_TO_LABEL: dict[str, str] = {
 }
 
 
+def _hex_to_rgb(h: str) -> tuple[float, float, float]:
+    h = h.lstrip("#")
+    return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+
+_RGB_GREEN       = _hex_to_rgb(GREEN)
+_RGB_LIGHT_GREEN = _hex_to_rgb(LIGHT_GREEN)
+_RGB_RED         = _hex_to_rgb(RED)
+
+
 def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
     try:
         value = int(pct_str.rstrip("%"))
     except ValueError:
-        return colorsys.hsv_to_rgb(0.0, 1.0, 1.0)
-    t = max(0.0, min(1.0, value / 100.0))
-    hue = t / 3.0
-    return colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+        return _RGB_RED
+    if value > 80:
+        return _RGB_GREEN
+    if value > 30:
+        return _RGB_LIGHT_GREEN
+    return _RGB_RED
 
 
 def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:

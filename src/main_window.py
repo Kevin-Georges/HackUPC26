@@ -55,8 +55,12 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(4)
 
+        self._top_area = QWidget()   # reserved — free space for later use
+        self._top_area.setStyleSheet("background: transparent; border: none;")
+        ll.addWidget(self._top_area, stretch=1)
+
         viewer = ModelViewer(model_path)
-        ll.addWidget(viewer)
+        ll.addWidget(viewer, stretch=2)
         root.addWidget(left, stretch=3)
 
         # ── Right: chart + health table ───────────────────────────────────────
@@ -96,7 +100,7 @@ class MainWindow(QMainWindow):
         if self._csv_file:
             self._csv_file.close()
         self._run_id += 1
-        path = _CSV_DIR / f"simulation_log_run{self._run_id}.csv"
+        path = _CSV_DIR / f"sim_details_{self._run_id}.csv"
         self._csv_file   = open(path, "w", newline="", encoding="utf-8")
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(_CSV_HEADER)
