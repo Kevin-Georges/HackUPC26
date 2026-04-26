@@ -1,3 +1,4 @@
+import colorsys
 import warnings
 import numpy as np
 from PyQt5.QtWidgets import QOpenGLWidget
@@ -5,7 +6,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from OpenGL.GL import *  # noqa: F401,F403
 from OpenGL.GLU import gluPerspective, gluUnProject
 import trimesh
-from constants import BLUE, GREEN, LIGHT_GREEN, RED
+from constants import BLUE, RED
 
 # ── GLSL sources ──────────────────────────────────────────────────────────────
 _VERT_SRC = """
@@ -51,9 +52,7 @@ def _hex_to_rgb(h: str) -> tuple[float, float, float]:
     h = h.lstrip("#")
     return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
 
-_RGB_GREEN       = _hex_to_rgb(GREEN)
-_RGB_LIGHT_GREEN = _hex_to_rgb(LIGHT_GREEN)
-_RGB_RED         = _hex_to_rgb(RED)
+_RGB_RED = _hex_to_rgb(RED)
 
 
 def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
@@ -61,11 +60,9 @@ def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
         value = int(pct_str.rstrip("%"))
     except ValueError:
         return _RGB_RED
-    if value > 80:
-        return _RGB_GREEN
-    if value > 30:
-        return _RGB_LIGHT_GREEN
-    return _RGB_RED
+    t = max(0.0, min(1.0, value / 100.0))
+    hue = t * (120.0 / 360.0)  # 0° red → 120° green
+    return colorsys.hsv_to_rgb(hue, 1.0, 1.0)
 
 
 def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:
@@ -102,6 +99,9 @@ class ModelViewer(QOpenGLWidget):
         self._ready = False
         self._meshes: list[tuple[int, int, str, np.ndarray]] = []  # (vbo, n_verts, node_name, cpu_verts)
         self._prog = 0
+        self._loc_use = -1
+        self._loc_col = -1
+        self._loc_def = -1
         self._component_colors: dict[str, tuple[float, float, float]] = {}
         self._pending_pick: tuple[int, int] | None = None
         self.setMinimumSize(400, 400)
@@ -150,6 +150,9 @@ class ModelViewer(QOpenGLWidget):
         glDeleteShader(vert)
         glDeleteShader(frag)
         self._prog = prog
+        self._loc_use = glGetUniformLocation(prog, "uUseHighlight")
+        self._loc_col = glGetUniformLocation(prog, "uHighlightColor")
+        self._loc_def = glGetUniformLocation(prog, "uDefaultColor")
 
     def _load_model(self):
         try:
@@ -238,28 +241,33 @@ class ModelViewer(QOpenGLWidget):
             return
 
         glUseProgram(self._prog)
-        loc_use = glGetUniformLocation(self._prog, "uUseHighlight")
-        loc_col = glGetUniformLocation(self._prog, "uHighlightColor")
-        loc_def = glGetUniformLocation(self._prog, "uDefaultColor")
-        glUniform3f(loc_def, *BLUE)
+        glUniform3f(self._loc_def, *BLUE)
+        glEnableVertexAttribArray(0)
 
+        # solid pass — coloured components
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        glUniform1i(self._loc_use, 1)
         for vbo, n_verts, node_name, _ in self._meshes:
             rgb = self._component_colors.get(node_name)
-            if rgb is not None:
-                glUniform1i(loc_use, 1)
-                glUniform3f(loc_col, *rgb)
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            else:
-                glUniform1i(loc_use, 0)
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-
-            glEnableVertexAttribArray(0)
+            if rgb is None:
+                continue
+            glUniform3f(self._loc_col, *rgb)
             glBindBuffer(GL_ARRAY_BUFFER, vbo)
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
             glDrawArrays(GL_TRIANGLES, 0, n_verts)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
-            glDisableVertexAttribArray(0)
 
+        # wireframe pass — unmapped nodes
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        glUniform1i(self._loc_use, 0)
+        for vbo, n_verts, node_name, _ in self._meshes:
+            if self._component_colors.get(node_name) is not None:
+                continue
+            glBindBuffer(GL_ARRAY_BUFFER, vbo)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+            glDrawArrays(GL_TRIANGLES, 0, n_verts)
+
+        glDisableVertexAttribArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
         glUseProgram(0)
 

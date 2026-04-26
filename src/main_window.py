@@ -53,14 +53,10 @@ class MainWindow(QMainWindow):
         )
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
-        ll.setSpacing(4)
-
-        self._top_area = QWidget()   # reserved — free space for later use
-        self._top_area.setStyleSheet("background: transparent; border: none;")
-        ll.addWidget(self._top_area, stretch=1)
+        ll.setSpacing(0)
 
         viewer = ModelViewer(model_path)
-        ll.addWidget(viewer, stretch=2)
+        ll.addWidget(viewer, stretch=1)
         root.addWidget(left, stretch=3)
 
         # ── Right: chart + health table ───────────────────────────────────────
