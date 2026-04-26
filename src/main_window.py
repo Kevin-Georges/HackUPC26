@@ -12,6 +12,7 @@ from constants import BG, PANEL, BORDER, TEXT
 from model_viewer import ModelViewer, build_color_map
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
+from rul_heatmap_panel import RULHeatmapPanel
 
 _CSV_DIR = pathlib.Path(__file__).parent.parent
 _CSV_HEADER = [
@@ -55,9 +56,8 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(4, 4, 4, 4)
         ll.setSpacing(4)
 
-        self._top_area = QWidget()   # reserved — free space for later use
-        self._top_area.setStyleSheet("background: transparent; border: none;")
-        ll.addWidget(self._top_area, stretch=1)
+        self._rul_heatmap = RULHeatmapPanel()
+        ll.addWidget(self._rul_heatmap, stretch=1)
 
         viewer = ModelViewer(model_path)
         ll.addWidget(viewer, stretch=2)
@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
             snap.maintenance_level,
         )
         self._viewer.set_component_colors(build_color_map(self._health._ROWS))
+        self._rul_heatmap.update_health(self._health._ROWS, self._health._day)
 
         h = {name: pct for name, pct in self._health._ROWS}
         self._csv_writer.writerow([

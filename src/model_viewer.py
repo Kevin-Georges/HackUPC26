@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from OpenGL.GL import *  # noqa: F401,F403
 from OpenGL.GLU import gluPerspective, gluUnProject
 import trimesh
-from constants import BLUE, GREEN, LIGHT_GREEN, RED
+from constants import BLUE, GREEN, RED
 
 # ── GLSL sources ──────────────────────────────────────────────────────────────
 _VERT_SRC = """
@@ -51,9 +51,12 @@ def _hex_to_rgb(h: str) -> tuple[float, float, float]:
     h = h.lstrip("#")
     return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
 
-_RGB_GREEN       = _hex_to_rgb(GREEN)
-_RGB_LIGHT_GREEN = _hex_to_rgb(LIGHT_GREEN)
-_RGB_RED         = _hex_to_rgb(RED)
+def _lerp(a, b, t):
+    return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
+
+_RGB_GREEN  = _hex_to_rgb(GREEN)
+_RGB_YELLOW = _hex_to_rgb("#d29922")
+_RGB_RED    = _hex_to_rgb(RED)
 
 
 def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
@@ -61,11 +64,11 @@ def _pct_to_rgb(pct_str: str) -> tuple[float, float, float]:
         value = int(pct_str.rstrip("%"))
     except ValueError:
         return _RGB_RED
-    if value > 80:
-        return _RGB_GREEN
-    if value > 30:
-        return _RGB_LIGHT_GREEN
-    return _RGB_RED
+    v = max(0, min(100, value)) / 100.0
+    if v >= 0.5:
+        return _lerp(_RGB_YELLOW, _RGB_GREEN, (v - 0.5) / 0.5)
+    else:
+        return _lerp(_RGB_RED, _RGB_YELLOW, v / 0.5)
 
 
 def build_color_map(health_rows) -> dict[str, tuple[float, float, float]]:

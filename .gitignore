@@ -53,3 +53,12 @@ Thumbs.db
 .env
 .flaskenv
 *.env.*
+
+# === Simulation output CSVs ===
+sim_details_*.csv
+
+# === Trained ML models ===
+ml/models/*.joblib
+
+# === Matplotlib cache ===
+.matplotlib/
