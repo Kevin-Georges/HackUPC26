@@ -119,8 +119,8 @@ def _health_color(pct_str: str) -> str:
         return GREEN
     if value > 50:
         return YELLOW
-    if value > 30:
-        return ORANGE
+    if value > 31:
+        return RED
     return RED
 
 
