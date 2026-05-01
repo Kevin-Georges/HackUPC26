@@ -21,10 +21,10 @@ import math
 from dataclasses import dataclass, field
 
 # Physical constants
-_BOLTZMANN_EV = 8.617e-5    # Boltzmann constant in eV/K
-_KELVIN       = 273.15      # °C → K offset
+_BOLTZMANN_EV = 8.617e-5  # Boltzmann constant in eV/K
+_KELVIN = 273.15  # °C → K offset
 
-_OPTIMAL_TEMP = 21.5        # °C — midpoint of the safe operating band (18–25 °C)
+_OPTIMAL_TEMP = 21.5  # °C — midpoint of the safe operating band (18–25 °C)
 
 
 def _to_pct(dmg: float, capacity: float) -> int:
@@ -33,9 +33,9 @@ def _to_pct(dmg: float, capacity: float) -> int:
 
 @dataclass(frozen=True)
 class ComponentHealth:
-    name:       str
-    health_pct: int              # 0–100
-    metrics:    dict = field(default_factory=dict)  # physical state variables
+    name: str
+    health_pct: int  # 0–100
+    metrics: dict = field(default_factory=dict)  # physical state variables
 
     @property
     def pct_str(self) -> str:
@@ -59,17 +59,19 @@ class DegradationEngine:
     #
     # Reference: Archard, J.F. (1953). "Contact and Rubbing of Flat Surfaces."
     #            Journal of Applied Physics, 24(8), 981–988.
-    _ARCHARD_K            = 2.0e-3   # wear coefficient for tool-steel on metal powder
-                                      # calibrated so blade reaches ~50 % health at 500 builds
-                                      # and fails at ~1 200 builds — consistent with LPBF doctor-blade
-                                      # replacement schedules of 300–500 builds (BJ is ~2–3× gentler)
-    _ARCHARD_F0           = 10.0     # baseline normal force (N) at zero contamination
-    _ARCHARD_HUMIDITY_K   = 5.0      # force amplification factor per unit humidity (0–1)
-    _ARCHARD_POWDER_K     = 1.5      # force amplification from degraded powder (irregular particles)
-    _ARCHARD_H0           = 800.0    # baseline hardness (MPa) at optimal temperature
-    _ARCHARD_H_TEMP_SLOPE = 8.0      # hardness reduction rate (MPa per °C above optimal)
-    _ARCHARD_STROKE       = 0.35     # blade stroke per cycle (m)
-    _ARCHARD_W_MAX        = 0.015    # normalised wear volume at end-of-life
+    _ARCHARD_K = 2.0e-3  # wear coefficient for tool-steel on metal powder
+    # calibrated so blade reaches ~50 % health at 500 builds
+    # and fails at ~1 200 builds — consistent with LPBF doctor-blade
+    # replacement schedules of 300–500 builds (BJ is ~2–3× gentler)
+    _ARCHARD_F0 = 10.0  # baseline normal force (N) at zero contamination
+    _ARCHARD_HUMIDITY_K = 5.0  # force amplification factor per unit humidity (0–1)
+    _ARCHARD_POWDER_K = (
+        1.5  # force amplification from degraded powder (irregular particles)
+    )
+    _ARCHARD_H0 = 800.0  # baseline hardness (MPa) at optimal temperature
+    _ARCHARD_H_TEMP_SLOPE = 8.0  # hardness reduction rate (MPa per °C above optimal)
+    _ARCHARD_STROKE = 0.35  # blade stroke per cycle (m)
+    _ARCHARD_W_MAX = 0.015  # normalised wear volume at end-of-life
 
     # ── Model 2 — Coffin-Manson Fatigue Law (Nozzle Plate) ────────────────────
     #
@@ -85,15 +87,17 @@ class DegradationEngine:
     #
     # Reference: Coffin, L.F. (1954). Trans. ASME, 76, 931–950.
     #            Manson, S.S. (1953). NACA TN 2933.
-    _CM_BASE_DT     = 5.0       # intrinsic thermal cycle amplitude per firing (°C)
-    _CM_AMBIENT_K   = 0.5       # fraction of ambient deviation added to ΔT
-    _CM_HUMIDITY_K  = 2.0       # humidity → equivalent ΔT contribution (°C per unit)
-    _CM_POWDER_K    = 1.5       # degraded powder → equivalent ΔT contribution (°C per unit)
-    _CM_BINDER_K    = 2.0       # binder viscosity stress → equivalent ΔT contribution (°C per unit)
-    _CM_C           = 24_000.0  # material constant: ~50 % health at 300 builds, failure ~700–800 builds
-                                  # based on ExOne/Voxeljet printhead service intervals of 6–12 months
-                                  # at 1–2 builds/day (180–730 builds between major services)
-    _CM_M           = 2.0       # fatigue ductility exponent
+    _CM_BASE_DT = 5.0  # intrinsic thermal cycle amplitude per firing (°C)
+    _CM_AMBIENT_K = 0.5  # fraction of ambient deviation added to ΔT
+    _CM_HUMIDITY_K = 2.0  # humidity → equivalent ΔT contribution (°C per unit)
+    _CM_POWDER_K = 1.5  # degraded powder → equivalent ΔT contribution (°C per unit)
+    _CM_BINDER_K = (
+        2.0  # binder viscosity stress → equivalent ΔT contribution (°C per unit)
+    )
+    _CM_C = 24_000.0  # material constant: ~50 % health at 300 builds, failure ~700–800 builds
+    # based on ExOne/Voxeljet printhead service intervals of 6–12 months
+    # at 1–2 builds/day (180–730 builds between major services)
+    _CM_M = 2.0  # fatigue ductility exponent
 
     # ── Model 3 — Arrhenius Degradation Model (Heating Elements) ──────────────
     #
@@ -110,16 +114,16 @@ class DegradationEngine:
     #
     # Reference: Arrhenius, S. (1889). Z. Phys. Chem. 4, 226–248.
     #            MIL-HDBK-217F — Reliability Prediction of Electronic Equipment.
-    _ARR_EA           = 0.85      # activation energy (eV) — metal-oxide resistor
-    _ARR_T_REF_C      = 25.0      # reference temperature (°C)
-    _ARR_L_REF        = 3_000.0   # characteristic life at T_ref (cycles)
-                                   # at nominal 21 °C the Arrhenius factor extends this to ~3 000 builds
-                                   # grounded in MIL-HDBK-217F / industrial cartridge-heater MTBF of
-                                   # 5 000–10 000 hr at rated temp; at ~8 hr/build → 625–1 250 builds
-                                   # to MTBF, so safe-life replacement at ~2 000–3 000 builds
-    _ARR_SELF_HEAT_K  = 1.5       # extra self-heating per °C below optimal (°C/°C)
-    _ARR_VOLTAGE_K    = 15.0      # equivalent temperature rise per unit voltage stress (°C)
-    _ARR_EA_OVER_KB   = _ARR_EA / _BOLTZMANN_EV  # 9 866 K — precomputed activation ratio
+    _ARR_EA = 0.85  # activation energy (eV) — metal-oxide resistor
+    _ARR_T_REF_C = 25.0  # reference temperature (°C)
+    _ARR_L_REF = 3_000.0  # characteristic life at T_ref (cycles)
+    # at nominal 21 °C the Arrhenius factor extends this to ~3 000 builds
+    # grounded in MIL-HDBK-217F / industrial cartridge-heater MTBF of
+    # 5 000–10 000 hr at rated temp; at ~8 hr/build → 625–1 250 builds
+    # to MTBF, so safe-life replacement at ~2 000–3 000 builds
+    _ARR_SELF_HEAT_K = 1.5  # extra self-heating per °C below optimal (°C/°C)
+    _ARR_VOLTAGE_K = 15.0  # equivalent temperature rise per unit voltage stress (°C)
+    _ARR_EA_OVER_KB = _ARR_EA / _BOLTZMANN_EV  # 9 866 K — precomputed activation ratio
 
     # ── Model 4 — Paris Law Fatigue (Drive Motor & Rails) ─────────────────────
     #
@@ -133,15 +137,15 @@ class DegradationEngine:
     #   C, m — Paris material constants (tool-steel drive shaft)
     #
     # Reference: Paris, P.C. & Erdogan, F. (1963). J. Basic Eng., 85, 528–534.
-    _PARIS_C         = 5.5e-5   # crack growth coefficient
-                                  # calibrated to industrial servo/stepper motor MTBF of 5–10 yr
-                                  # (THK linear guide rails: 50 000–100 000 hr rated life)
-                                  # at 1 build/day → ~50 % health at ~750 builds, failure ~1 500 builds ≈ 4 yr
-    _PARIS_M         = 3.0      # Paris exponent (steel alloys: typically 2.5–4.0)
-    _PARIS_DK0       = 1.0      # baseline ΔK at unit load rate
-    _PARIS_K_LOAD    = 1.2      # load-rate amplification of ΔK
-    _PARIS_K_HUMID   = 0.5      # humidity contribution to ΔK (corrosion-assisted fatigue)
-    _PARIS_A_CRIT    = 1.0      # normalised critical crack size at failure
+    _PARIS_C = 5.5e-5  # crack growth coefficient
+    # calibrated to industrial servo/stepper motor MTBF of 5–10 yr
+    # (THK linear guide rails: 50 000–100 000 hr rated life)
+    # at 1 build/day → ~50 % health at ~750 builds, failure ~1 500 builds ≈ 4 yr
+    _PARIS_M = 3.0  # Paris exponent (steel alloys: typically 2.5–4.0)
+    _PARIS_DK0 = 1.0  # baseline ΔK at unit load rate
+    _PARIS_K_LOAD = 1.2  # load-rate amplification of ΔK
+    _PARIS_K_HUMID = 0.5  # humidity contribution to ΔK (corrosion-assisted fatigue)
+    _PARIS_A_CRIT = 1.0  # normalised critical crack size at failure
 
     # ── Model 5 — Kern-Seaton Fouling (Cleaning & Thermal Interface) ──────────
     #
@@ -156,12 +160,12 @@ class DegradationEngine:
     # Asymptotic fouling: Rf* = φ_d / φ_r  (equilibrium when dRf/dt = 0)
     #
     # Reference: Kern, D.Q. & Seaton, R.E. (1959). Brit. Chem. Eng., 4, 258–262.
-    _KS_PHI_D_K      = 0.025    # deposition rate constant (per unit contamination per cycle)
-                                  # inkjet/BJ wiper blades replaced every 3–4 months of active use
-                                  # → cleaning interface consumable lifespan ~200 builds to 50 % health,
-                                  #   ~500 builds to failure (≈16 months at 1 build/day)
-    _KS_PHI_R_K      = 0.004    # removal rate constant (per unit maintenance per day)
-    _KS_RF_MAX       = 1.0      # normalised fouling resistance at failure
+    _KS_PHI_D_K = 0.025  # deposition rate constant (per unit contamination per cycle)
+    # inkjet/BJ wiper blades replaced every 3–4 months of active use
+    # → cleaning interface consumable lifespan ~200 builds to 50 % health,
+    #   ~500 builds to failure (≈16 months at 1 build/day)
+    _KS_PHI_R_K = 0.004  # removal rate constant (per unit maintenance per day)
+    _KS_RF_MAX = 1.0  # normalised fouling resistance at failure
 
     # ── Model 6 — Moisture-Thermal Degradation (Insulation & Sensors) ─────────
     #
@@ -184,37 +188,39 @@ class DegradationEngine:
     # their Arrhenius damage rate is amplified proportionally.
     #
     # Reference: IEC 60085 — Thermal classification of electrical insulation.
-    _INS_D_MOISTURE  = 0.012    # Fickian diffusion rate (fraction per day toward equilibrium)
-    _INS_K_MOIST     = 1.2e-3   # moisture → damage rate
-    _INS_K_TEMP      = 8.0e-5   # thermal-cracking rate per °C deviation per cycle
-                                  # industrial insulation panels in heated chambers (150–200 °C) rated
-                                  # for decades but degraded by thermal cycling and moisture ingress
-                                  # (IEC 60085 Class F/H: ~10–20 yr continuous service life)
-                                  # → calibrated to ~50 % health at ~2 000 builds, failure ~4 500 builds ≈ 12 yr
-    _INS_DAMAGE_MAX  = 1.0      # damage at failure
-    _INS_HEATER_AMP  = 0.6      # fraction by which poor insulation amplifies heater damage
+    _INS_D_MOISTURE = (
+        0.012  # Fickian diffusion rate (fraction per day toward equilibrium)
+    )
+    _INS_K_MOIST = 1.2e-3  # moisture → damage rate
+    _INS_K_TEMP = 8.0e-5  # thermal-cracking rate per °C deviation per cycle
+    # industrial insulation panels in heated chambers (150–200 °C) rated
+    # for decades but degraded by thermal cycling and moisture ingress
+    # (IEC 60085 Class F/H: ~10–20 yr continuous service life)
+    # → calibrated to ~50 % health at ~2 000 builds, failure ~4 500 builds ≈ 12 yr
+    _INS_DAMAGE_MAX = 1.0  # damage at failure
+    _INS_HEATER_AMP = 0.6  # fraction by which poor insulation amplifies heater damage
 
     # ──────────────────────────────────────────────────────────────────────────
 
     def __init__(self) -> None:
-        self._blade_wear      = 0.0   # Archard
-        self._nozzle_damage   = 0.0   # Coffin-Manson
-        self._heater_damage   = 0.0   # Arrhenius
-        self._motor_crack     = 0.0   # Paris Law: normalised crack length
-        self._fouling         = 0.0   # Kern-Seaton: normalised fouling resistance
-        self._ins_moisture    = 0.0   # Fickian: current moisture content
-        self._ins_damage      = 0.0   # combined insulation damage
-        self._prev_load       = 0.0
+        self._blade_wear = 0.0  # Archard
+        self._nozzle_damage = 0.0  # Coffin-Manson
+        self._heater_damage = 0.0  # Arrhenius
+        self._motor_crack = 0.0  # Paris Law: normalised crack length
+        self._fouling = 0.0  # Kern-Seaton: normalised fouling resistance
+        self._ins_moisture = 0.0  # Fickian: current moisture content
+        self._ins_damage = 0.0  # combined insulation damage
+        self._prev_load = 0.0
 
     def tick(
         self,
-        temperature:             float,
-        humidity:                float,
-        operational_load:        float,
-        powder_quality:          float = 1.0,
+        temperature: float,
+        humidity: float,
+        operational_load: float,
+        powder_quality: float = 1.0,
         binder_viscosity_stress: float = 0.0,
-        voltage_stress:          float = 0.0,
-        maintenance_level:       float = 1.0,
+        voltage_stress: float = 0.0,
+        maintenance_level: float = 1.0,
     ) -> list[ComponentHealth]:
         """Advance one simulation day and return updated health values.
 
@@ -233,39 +239,75 @@ class DegradationEngine:
 
         # Insulation health feeds back into heater damage
         ins_health_frac = max(0.0, 1.0 - self._ins_damage / self._INS_DAMAGE_MAX)
-        heater_amp      = 1.0 + self._INS_HEATER_AMP * (1.0 - ins_health_frac)
+        heater_amp = 1.0 + self._INS_HEATER_AMP * (1.0 - ins_health_frac)
 
         # Moisture ingress update (Fickian) — kept in tick() so _insulation_increment is pure
         self._ins_moisture += self._INS_D_MOISTURE * (humidity - self._ins_moisture)
-        self._ins_moisture  = max(0.0, min(1.0, self._ins_moisture))
+        self._ins_moisture = max(0.0, min(1.0, self._ins_moisture))
 
-        self._blade_wear    += self._archard_increment(temperature, humidity, powder_quality, delta)
-        self._nozzle_damage += self._coffin_manson_increment(temperature, humidity, powder_quality, binder_viscosity_stress, delta)
-        self._heater_damage += self._arrhenius_increment(temperature, voltage_stress, delta) * heater_amp
-        self._motor_crack   += self._paris_increment(humidity, delta)
-        self._fouling        = max(0.0, self._fouling + self._kern_seaton_increment(humidity, maintenance_level, delta))
-        self._ins_damage    += self._insulation_increment(temperature, delta)
+        self._blade_wear += self._archard_increment(
+            temperature, humidity, powder_quality, delta
+        )
+        self._nozzle_damage += self._coffin_manson_increment(
+            temperature, humidity, powder_quality, binder_viscosity_stress, delta
+        )
+        self._heater_damage += (
+            self._arrhenius_increment(temperature, voltage_stress, delta) * heater_amp
+        )
+        self._motor_crack += self._paris_increment(humidity, delta)
+        self._fouling = max(
+            0.0,
+            self._fouling
+            + self._kern_seaton_increment(humidity, maintenance_level, delta),
+        )
+        self._ins_damage += self._insulation_increment(temperature, delta)
 
         return [
-            ComponentHealth("Recoater Blade", _to_pct(self._blade_wear, self._ARCHARD_W_MAX),
-                metrics={"wear_volume": round(self._blade_wear, 6),
-                         "wear_pct_of_limit": round(self._blade_wear / self._ARCHARD_W_MAX * 100, 2)}),
-            ComponentHealth("Nozzle Plate", _to_pct(self._nozzle_damage, 1.0),
-                metrics={"fatigue_damage": round(self._nozzle_damage, 6)}),
-            ComponentHealth("Heating Elements", _to_pct(self._heater_damage, 1.0),
-                metrics={"degradation_fraction": round(self._heater_damage, 6)}),
-            ComponentHealth("Drive Motor & Rails", _to_pct(self._motor_crack, self._PARIS_A_CRIT),
-                metrics={"crack_length_norm": round(self._motor_crack, 6)}),
-            ComponentHealth("Cleaning & Thermal Iface", _to_pct(self._fouling, self._KS_RF_MAX),
-                metrics={"fouling_resistance": round(self._fouling, 6)}),
-            ComponentHealth("Insulation & Sensors", _to_pct(self._ins_damage, self._INS_DAMAGE_MAX),
-                metrics={"moisture_content": round(self._ins_moisture, 6),
-                         "thermal_damage": round(self._ins_damage, 6)}),
+            ComponentHealth(
+                "Recoater Blade",
+                _to_pct(self._blade_wear, self._ARCHARD_W_MAX),
+                metrics={
+                    "wear_volume": round(self._blade_wear, 6),
+                    "wear_pct_of_limit": round(
+                        self._blade_wear / self._ARCHARD_W_MAX * 100, 2
+                    ),
+                },
+            ),
+            ComponentHealth(
+                "Nozzle Plate",
+                _to_pct(self._nozzle_damage, 1.0),
+                metrics={"fatigue_damage": round(self._nozzle_damage, 6)},
+            ),
+            ComponentHealth(
+                "Heating Elements",
+                _to_pct(self._heater_damage, 1.0),
+                metrics={"degradation_fraction": round(self._heater_damage, 6)},
+            ),
+            ComponentHealth(
+                "Drive Motor & Rails",
+                _to_pct(self._motor_crack, self._PARIS_A_CRIT),
+                metrics={"crack_length_norm": round(self._motor_crack, 6)},
+            ),
+            ComponentHealth(
+                "Cleaning & Thermal Iface",
+                _to_pct(self._fouling, self._KS_RF_MAX),
+                metrics={"fouling_resistance": round(self._fouling, 6)},
+            ),
+            ComponentHealth(
+                "Insulation & Sensors",
+                _to_pct(self._ins_damage, self._INS_DAMAGE_MAX),
+                metrics={
+                    "moisture_content": round(self._ins_moisture, 6),
+                    "thermal_damage": round(self._ins_damage, 6),
+                },
+            ),
         ]
 
     # ── Private model calculations ─────────────────────────────────────────────
 
-    def _archard_increment(self, temperature: float, humidity: float, powder_quality: float, cycles: float) -> float:
+    def _archard_increment(
+        self, temperature: float, humidity: float, powder_quality: float, cycles: float
+    ) -> float:
         """W = K * F * s / H  — wear volume for this cycle increment.
 
         Degraded powder increases contact force because irregular particles
@@ -281,7 +323,14 @@ class DegradationEngine:
         s = self._ARCHARD_STROKE * cycles
         return self._ARCHARD_K * F * s / H
 
-    def _coffin_manson_increment(self, temperature: float, humidity: float, powder_quality: float, binder_viscosity_stress: float, cycles: float) -> float:
+    def _coffin_manson_increment(
+        self,
+        temperature: float,
+        humidity: float,
+        powder_quality: float,
+        binder_viscosity_stress: float,
+        cycles: float,
+    ) -> float:
         """Miner's damage = cycles / N_f,  N_f = C * ΔT_eff^(-m).
 
         ΔT_eff = base firing amplitude
@@ -292,12 +341,12 @@ class DegradationEngine:
         """
         delta_T = (
             self._CM_BASE_DT
-            + self._CM_AMBIENT_K  * abs(temperature - _OPTIMAL_TEMP)
+            + self._CM_AMBIENT_K * abs(temperature - _OPTIMAL_TEMP)
             + self._CM_HUMIDITY_K * humidity
-            + self._CM_POWDER_K   * (1.0 - powder_quality)
-            + self._CM_BINDER_K   * binder_viscosity_stress
+            + self._CM_POWDER_K * (1.0 - powder_quality)
+            + self._CM_BINDER_K * binder_viscosity_stress
         )
-        N_f = self._CM_C * (delta_T ** -self._CM_M)
+        N_f = self._CM_C * (delta_T**-self._CM_M)
         return cycles / max(N_f, 1.0)
 
     def _paris_increment(self, humidity: float, cycles: float) -> float:
@@ -306,10 +355,16 @@ class DegradationEngine:
         Load rate (cycles/day) raises cyclic stress; humidity promotes
         corrosion-assisted fatigue that accelerates crack tip growth.
         """
-        delta_K = self._PARIS_DK0 * (1.0 + self._PARIS_K_LOAD * cycles) * (1.0 + self._PARIS_K_HUMID * humidity)
-        return self._PARIS_C * (delta_K ** self._PARIS_M) * cycles
+        delta_K = (
+            self._PARIS_DK0
+            * (1.0 + self._PARIS_K_LOAD * cycles)
+            * (1.0 + self._PARIS_K_HUMID * humidity)
+        )
+        return self._PARIS_C * (delta_K**self._PARIS_M) * cycles
 
-    def _kern_seaton_increment(self, humidity: float, maintenance_level: float, cycles: float) -> float:
+    def _kern_seaton_increment(
+        self, humidity: float, maintenance_level: float, cycles: float
+    ) -> float:
         """dRf = φ_d − φ_r · Rf  — Kern-Seaton asymptotic fouling per day.
 
         Deposition scales with contamination load (humidity × cycles);
@@ -328,10 +383,12 @@ class DegradationEngine:
         self._ins_moisture already reflects the current Fickian equilibrium.
         """
         thermal_cracking = self._INS_K_TEMP * abs(temperature - _OPTIMAL_TEMP) * cycles
-        moisture_damage  = self._INS_K_MOIST * self._ins_moisture
+        moisture_damage = self._INS_K_MOIST * self._ins_moisture
         return moisture_damage + thermal_cracking
 
-    def _arrhenius_increment(self, temperature: float, voltage_stress: float, cycles: float) -> float:
+    def _arrhenius_increment(
+        self, temperature: float, voltage_stress: float, cycles: float
+    ) -> float:
         """Lifetime fraction consumed = cycles / L(T_element).
 
         Voltage spikes cause Joule heating inside the element, raising its
@@ -340,12 +397,12 @@ class DegradationEngine:
         exponential, so both stressors compound correctly.
         """
         cold_deficit = max(0.0, _OPTIMAL_TEMP - temperature)
-        T_element_C  = (
+        T_element_C = (
             temperature
             + self._ARR_SELF_HEAT_K * cold_deficit
-            + self._ARR_VOLTAGE_K   * voltage_stress
+            + self._ARR_VOLTAGE_K * voltage_stress
         )
-        T_K     = T_element_C + _KELVIN
+        T_K = T_element_C + _KELVIN
         T_ref_K = self._ARR_T_REF_C + _KELVIN
         lifetime = self._ARR_L_REF * math.exp(
             self._ARR_EA_OVER_KB * (1.0 / T_K - 1.0 / T_ref_K)

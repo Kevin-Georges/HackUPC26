@@ -20,33 +20,46 @@ class TempChart(FigureCanvasQTAgg):
         super().__init__(fig)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._t_buf   = deque(maxlen=_WINDOW_DAYS)
+        self._t_buf = deque(maxlen=_WINDOW_DAYS)
         self._tmp_buf = deque(maxlen=_WINDOW_DAYS)
-        self._tick    = 0
+        self._tick = 0
 
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
         ax.axhline(
             TemperatureStressDriver.CRITICAL,
-            color=RED, lw=0.9, ls="--", alpha=0.8,
+            color=RED,
+            lw=0.9,
+            ls="--",
+            alpha=0.8,
         )
         ax.axhline(
             TemperatureStressDriver.WARNING,
-            color=YELLOW, lw=0.9, ls="--", alpha=0.8,
+            color=YELLOW,
+            lw=0.9,
+            ls="--",
+            alpha=0.8,
         )
-        (self._line,) = ax.plot([], [], color="#ff7043", lw=0.9, alpha=0.9,
-                                label="Ambient temp")
+        (self._line,) = ax.plot(
+            [], [], color="#ff7043", lw=0.9, alpha=0.9, label="Ambient temp"
+        )
 
         ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(15, 28)  # driver bounded to set_point ± amplitude = 18–24 °C
-        self._title = ax.set_title("Temperature Stress — waiting…", color=TEXT,
-                                   fontsize=9, pad=5)
+        self._title = ax.set_title(
+            "Temperature Stress — waiting…", color=TEXT, fontsize=9, pad=5
+        )
         ax.set_xlabel("Day", color=DIM, fontsize=8)
         ax.set_ylabel("°C", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
-        ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
-                  loc="upper left")
+        ax.legend(
+            fontsize=7,
+            facecolor=PANEL,
+            edgecolor=BORDER,
+            labelcolor=TEXT,
+            loc="upper left",
+        )
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
