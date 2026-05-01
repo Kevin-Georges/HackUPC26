@@ -13,7 +13,7 @@ from model_viewer import ModelViewer, build_color_map
 from charts_panel import ChartsPanel
 from health_panel import HealthPanel
 
-_CSV_DIR = pathlib.Path(__file__).parent.parent
+_CSV_DIR = pathlib.Path(__file__).parent.parent / "ml" / "CSVs"
 _CSV_HEADER = [
     "run_id",
     "day",
@@ -83,9 +83,9 @@ class MainWindow(QMainWindow):
         health.component_failed.connect(self._on_component_failed)
         viewer.component_selected.connect(health.highlight)
 
-        self._csv_file   = None
+        self._csv_file = None
         self._csv_writer = None
-        self._run_id     = 0
+        self._run_id = 0
         self._open_csv()
 
         rw = QWidget()
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
             self._csv_file.close()
         self._run_id += 1
         path = _CSV_DIR / f"sim_details_{self._run_id}.csv"
-        self._csv_file   = open(path, "w", newline="", encoding="utf-8")
+        self._csv_file = open(path, "w", newline="", encoding="utf-8")
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(_CSV_HEADER)
         self._csv_file.flush()
@@ -118,23 +118,25 @@ class MainWindow(QMainWindow):
         self._viewer.set_component_colors(build_color_map(self._health._ROWS))
 
         h = {name: pct for name, pct in self._health._ROWS}
-        self._csv_writer.writerow([
-            self._run_id,
-            self._health._day,
-            f"{snap.temperature_stress:.4f}",
-            f"{snap.humidity_contamination:.4f}",
-            f"{snap.operational_load:.4f}",
-            f"{snap.maintenance_level:.4f}",
-            f"{snap.powder_quality:.4f}",
-            f"{snap.binder_viscosity_stress:.4f}",
-            f"{snap.voltage_stress:.4f}",
-            h.get("Recoater Blade",           ""),
-            h.get("Nozzle Plate",             ""),
-            h.get("Heating Elements",         ""),
-            h.get("Drive Motor & Rails",      ""),
-            h.get("Cleaning & Thermal Iface", ""),
-            h.get("Insulation & Sensors",     ""),
-        ])
+        self._csv_writer.writerow(
+            [
+                self._run_id,
+                self._health._day,
+                f"{snap.temperature_stress:.4f}",
+                f"{snap.humidity_contamination:.4f}",
+                f"{snap.operational_load:.4f}",
+                f"{snap.maintenance_level:.4f}",
+                f"{snap.powder_quality:.4f}",
+                f"{snap.binder_viscosity_stress:.4f}",
+                f"{snap.voltage_stress:.4f}",
+                h.get("Recoater Blade", ""),
+                h.get("Nozzle Plate", ""),
+                h.get("Heating Elements", ""),
+                h.get("Drive Motor & Rails", ""),
+                h.get("Cleaning & Thermal Iface", ""),
+                h.get("Insulation & Sensors", ""),
+            ]
+        )
         self._csv_file.flush()
 
     def closeEvent(self, event) -> None:
