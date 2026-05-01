@@ -53,3 +53,5 @@ Thumbs.db
 .env
 .flaskenv
 *.env.*
+
+,/ml/CSVs/*
