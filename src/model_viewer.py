@@ -32,25 +32,24 @@ void main() {
 
 # ── Name-translation: health-panel label → glb node names ────────────────────
 _LABEL_TO_NODE: dict[str, list[str]] = {
-    "Nozzle Plate":             ["Nozzle Plates"],
-    "Recoater Blade":           ["Recoater Roller"],
-    "Heating Elements":         ["Heating Lamps"],
-    "Drive Motor & Rails":      ["Motor", "Linear Guide Rail"],
+    "Nozzle Plate": ["Nozzle Plates"],
+    "Recoater Blade": ["Recoater Roller"],
+    "Heating Elements": ["Heating Lamps"],
+    "Drive Motor & Rails": ["Motor", "Linear Guide Rail"],
     "Cleaning & Thermal Iface": ["Cleaning Interface"],
-    "Insulation & Sensors":     ["Insulation Plating", "Temperature Sensor"],
+    "Insulation & Sensors": ["Insulation Plating", "Temperature Sensor"],
 }
 
 # Reverse map: glb node name → health-panel label
 _NODE_TO_LABEL: dict[str, str] = {
-    node: label
-    for label, nodes in _LABEL_TO_NODE.items()
-    for node in nodes
+    node: label for label, nodes in _LABEL_TO_NODE.items() for node in nodes
 }
 
 
 def _hex_to_rgb(h: str) -> tuple[float, float, float]:
     h = h.lstrip("#")
     return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+
 
 _RGB_RED = _hex_to_rgb(RED)
 
@@ -97,7 +96,9 @@ class ModelViewer(QOpenGLWidget):
         self._dist = 3.2
         self._last = None
         self._ready = False
-        self._meshes: list[tuple[int, int, str, np.ndarray]] = []  # (vbo, n_verts, node_name, cpu_verts)
+        self._meshes: list[
+            tuple[int, int, str, np.ndarray]
+        ] = []  # (vbo, n_verts, node_name, cpu_verts)
         self._prog = 0
         self._loc_use = -1
         self._loc_col = -1
@@ -185,9 +186,9 @@ class ModelViewer(QOpenGLWidget):
             s = float((all_verts.max(axis=0) - all_verts.min(axis=0)).max()) or 1.0
 
             for node_name, mesh in valid.items():
-                flat = (
-                    (mesh.vertices[mesh.faces.reshape(-1)] - c) / s * 1.6
-                ).astype(np.float32)
+                flat = ((mesh.vertices[mesh.faces.reshape(-1)] - c) / s * 1.6).astype(
+                    np.float32
+                )
                 vbo = int(glGenBuffers(1))
                 glBindBuffer(GL_ARRAY_BUFFER, vbo)
                 glBufferData(GL_ARRAY_BUFFER, flat.nbytes, flat, GL_STATIC_DRAW)
@@ -202,6 +203,7 @@ class ModelViewer(QOpenGLWidget):
             print(f"[ModelViewer] node names: {sorted(valid.keys())}")
         except Exception as exc:
             import traceback
+
             print(f"[ModelViewer] load error: {exc}")
             traceback.print_exc()
 
@@ -286,14 +288,14 @@ class ModelViewer(QOpenGLWidget):
             win_y = int(vp[3]) - 1 - py
 
             near = np.array(gluUnProject(px, win_y, 0.0, mv, pr, vp), dtype=np.float64)
-            far  = np.array(gluUnProject(px, win_y, 1.0, mv, pr, vp), dtype=np.float64)
+            far = np.array(gluUnProject(px, win_y, 1.0, mv, pr, vp), dtype=np.float64)
             ray_d = far - near
             length = np.linalg.norm(ray_d)
             if length < 1e-10:
                 return
             ray_d /= length
 
-            best_t     = np.inf
+            best_t = np.inf
             best_label = ""
             for _, _, node_name, cpu_verts in self._meshes:
                 if node_name not in _NODE_TO_LABEL:
@@ -301,7 +303,7 @@ class ModelViewer(QOpenGLWidget):
                 tris = cpu_verts.reshape(-1, 3, 3).astype(np.float64)
                 t = self._moller_trumbore(near, ray_d, tris)
                 if t < best_t:
-                    best_t     = t
+                    best_t = t
                     best_label = _NODE_TO_LABEL[node_name]
 
             self.component_selected.emit(best_label)
@@ -309,21 +311,20 @@ class ModelViewer(QOpenGLWidget):
             print(f"[Pick] {exc}")
 
     @staticmethod
-    def _moller_trumbore(ro: np.ndarray, rd: np.ndarray,
-                          tris: np.ndarray) -> float:
+    def _moller_trumbore(ro: np.ndarray, rd: np.ndarray, tris: np.ndarray) -> float:
         """Vectorised Möller–Trumbore. Returns minimum t > 0, or inf."""
         v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
         e1 = v1 - v0
         e2 = v2 - v0
-        h  = np.cross(rd, e2)
-        a  = (e1 * h).sum(axis=1)
+        h = np.cross(rd, e2)
+        a = (e1 * h).sum(axis=1)
         ok = np.abs(a) > 1e-8
-        f  = np.where(ok, 1.0 / np.where(ok, a, 1.0), 0.0)
-        s  = ro - v0
-        u  = f * (s * h).sum(axis=1)
-        q  = np.cross(s, e1)
-        v  = f * (rd * q).sum(axis=1)
-        t  = f * (e2 * q).sum(axis=1)
+        f = np.where(ok, 1.0 / np.where(ok, a, 1.0), 0.0)
+        s = ro - v0
+        u = f * (s * h).sum(axis=1)
+        q = np.cross(s, e1)
+        v = f * (rd * q).sum(axis=1)
+        t = f * (e2 * q).sum(axis=1)
         hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-4)
         return float(np.min(t[hit])) if np.any(hit) else np.inf
 

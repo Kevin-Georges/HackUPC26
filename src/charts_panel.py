@@ -3,8 +3,13 @@ from collections import deque
 import numpy as np
 from PyQt5.QtCore import QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
-    QSizePolicy, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel,
+    QSizePolicy,
+    QTabWidget,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
 )
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
@@ -19,6 +24,7 @@ _TIMER_MS = 100
 
 # ── Humidity / Contamination chart ────────────────────────────────────────────
 
+
 class HumidityChart(FigureCanvasQTAgg):
     """Live humidity & contamination index chart. Driven by update(snap)."""
 
@@ -30,23 +36,30 @@ class HumidityChart(FigureCanvasQTAgg):
 
         self._t_buf = deque(maxlen=_WINDOW_DAYS)
         self._y_buf = deque(maxlen=_WINDOW_DAYS)
-        self._tick  = 0
+        self._tick = 0
 
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
-        (self._line,) = ax.plot([], [], color="#58a6ff", lw=0.9, alpha=0.9,
-                                label="Contamination index")
+        (self._line,) = ax.plot(
+            [], [], color="#58a6ff", lw=0.9, alpha=0.9, label="Contamination index"
+        )
 
         ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(0.0, 0.45)
-        self._title = ax.set_title("Humidity / Contamination — waiting…",
-                                   color=TEXT, fontsize=9, pad=5)
+        self._title = ax.set_title(
+            "Humidity / Contamination — waiting…", color=TEXT, fontsize=9, pad=5
+        )
         ax.set_xlabel("Day", color=DIM, fontsize=8)
         ax.set_ylabel("Index (0–1)", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
-        ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
-                  loc="upper left")
+        ax.legend(
+            fontsize=7,
+            facecolor=PANEL,
+            edgecolor=BORDER,
+            labelcolor=TEXT,
+            loc="upper left",
+        )
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
@@ -69,8 +82,7 @@ class HumidityChart(FigureCanvasQTAgg):
             label, color = "WARNING", YELLOW
         else:
             label, color = "nominal", "#58a6ff"
-        self._title.set_text(
-            f"Humidity / Contamination — {val:.3f}  [{label}]")
+        self._title.set_text(f"Humidity / Contamination — {val:.3f}  [{label}]")
         self._title.set_color(color)
         self.draw_idle()
 
@@ -87,6 +99,7 @@ class HumidityChart(FigureCanvasQTAgg):
 
 # ── Printer usage (operational load) chart ────────────────────────────────────
 
+
 class UsageChart(FigureCanvasQTAgg):
     """Live instantaneous print-rate chart. Driven by update(snap)."""
 
@@ -96,26 +109,33 @@ class UsageChart(FigureCanvasQTAgg):
         super().__init__(fig)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._t_buf    = deque(maxlen=_WINDOW_DAYS)
-        self._y_buf    = deque(maxlen=_WINDOW_DAYS)
-        self._tick     = 0
+        self._t_buf = deque(maxlen=_WINDOW_DAYS)
+        self._y_buf = deque(maxlen=_WINDOW_DAYS)
+        self._tick = 0
         self._prev_load = 0.0
 
         ax = fig.add_subplot(111, facecolor=BG)
         self._ax = ax
 
-        (self._line,) = ax.plot([], [], color="#a371f7", lw=0.9, alpha=0.9,
-                                label="Cycles / day")
+        (self._line,) = ax.plot(
+            [], [], color="#a371f7", lw=0.9, alpha=0.9, label="Cycles / day"
+        )
 
         ax.set_xlim(0, _WINDOW_DAYS)
         ax.set_ylim(0.0, 2.1)
-        self._title = ax.set_title("Printer Usage — waiting…",
-                                   color=TEXT, fontsize=9, pad=5)
+        self._title = ax.set_title(
+            "Printer Usage — waiting…", color=TEXT, fontsize=9, pad=5
+        )
         ax.set_xlabel("Day", color=DIM, fontsize=8)
         ax.set_ylabel("Cycles / day", color=DIM, fontsize=8)
         ax.tick_params(colors=DIM, labelsize=7)
-        ax.legend(fontsize=7, facecolor=PANEL, edgecolor=BORDER, labelcolor=TEXT,
-                  loc="upper left")
+        ax.legend(
+            fontsize=7,
+            facecolor=PANEL,
+            edgecolor=BORDER,
+            labelcolor=TEXT,
+            loc="upper left",
+        )
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
@@ -207,8 +227,8 @@ class ChartsPanel(QWidget):
     firing at a fixed reduced rate.
     """
 
-    snapshot_ready   = pyqtSignal(object)
-    reset_requested  = pyqtSignal()
+    snapshot_ready = pyqtSignal(object)
+    reset_requested = pyqtSignal()
 
     _SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
     _SPEED_IDX_DEFAULT = 2  # 1×
@@ -224,13 +244,13 @@ class ChartsPanel(QWidget):
         tabs = QTabWidget()
         tabs.setStyleSheet(_TAB_STYLE)
 
-        self._temp_chart     = TempChart()
+        self._temp_chart = TempChart()
         self._humidity_chart = HumidityChart()
-        self._usage_chart    = UsageChart()
+        self._usage_chart = UsageChart()
 
-        tabs.addTab(self._temp_chart,     "Temperature")
+        tabs.addTab(self._temp_chart, "Temperature")
         tabs.addTab(self._humidity_chart, "Humidity")
-        tabs.addTab(self._usage_chart,    "Printer Usage")
+        tabs.addTab(self._usage_chart, "Printer Usage")
 
         root.addWidget(tabs)
 
@@ -269,10 +289,10 @@ class ChartsPanel(QWidget):
         root.addLayout(bar)
 
         # ── Simulation state ──────────────────────────────────────────────────
-        self._suite      = DriverSuite(seed=42)
-        self._paused     = False
-        self._speed_idx  = self._SPEED_IDX_DEFAULT
-        self._tick_acc   = 0.0
+        self._suite = DriverSuite(seed=42)
+        self._paused = False
+        self._speed_idx = self._SPEED_IDX_DEFAULT
+        self._tick_acc = 0.0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -299,9 +319,9 @@ class ChartsPanel(QWidget):
             self._update_speed_label()
 
     def _reset(self) -> None:
-        self._suite     = DriverSuite(seed=42)
-        self._tick_acc  = 0.0
-        self._paused    = False
+        self._suite = DriverSuite(seed=42)
+        self._tick_acc = 0.0
+        self._paused = False
         self._speed_idx = self._SPEED_IDX_DEFAULT
         self._btn_pause.setText("⏸  Pause")
         self._update_speed_label()

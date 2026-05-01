@@ -1,19 +1,26 @@
 from collections import deque
 
-from PyQt5.QtWidgets import QFrame, QVBoxLayout, QLabel, QGridLayout, QWidget, QSizePolicy
+from PyQt5.QtWidgets import (
+    QFrame,
+    QVBoxLayout,
+    QLabel,
+    QGridLayout,
+    QWidget,
+    QSizePolicy,
+)
 from PyQt5.QtGui import QFont, QPainter, QColor, QFontMetrics
 from PyQt5.QtCore import Qt, pyqtSignal
 from constants import GREEN, YELLOW, ORANGE, RED, TEXT, DIM
 from degradation_engine import DegradationEngine
 
-_N_CELLS  = 90   # number of discrete time cells in each bar
-_CELL_GAP = 1    # px gap between cells
+_N_CELLS = 90  # number of discrete time cells in each bar
+_CELL_GAP = 1  # px gap between cells
 
-_COLOR_HEALTHY   = QColor(GREEN)
-_COLOR_DEGRADED  = QColor(YELLOW)
-_COLOR_CRITICAL  = QColor(ORANGE)
-_COLOR_FAILED    = QColor(RED)
-_COLOR_NOW_LINE  = QColor(TEXT)
+_COLOR_HEALTHY = QColor(GREEN)
+_COLOR_DEGRADED = QColor(YELLOW)
+_COLOR_CRITICAL = QColor(ORANGE)
+_COLOR_FAILED = QColor(RED)
+_COLOR_NOW_LINE = QColor(TEXT)
 
 
 def _health_to_qcolor(pct: int) -> QColor:
@@ -35,8 +42,8 @@ class HealthBarWidget(QWidget):
     right edge of the last filled cell.
     """
 
-    _FONT     = QFont("Segoe UI", 8)
-    _TEXT_GAP = 6   # px between now-line and percentage text
+    _FONT = QFont("Segoe UI", 8)
+    _TEXT_GAP = 6  # px between now-line and percentage text
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,21 +73,20 @@ class HealthBarWidget(QWidget):
         bar_h = H - 2 * pad_v
 
         # Reserve space on the right for "100%" so the bar width is stable
-        fm        = QFontMetrics(self._FONT)
-        label_w   = fm.horizontalAdvance("100%")
-        bar_w     = W - label_w - self._TEXT_GAP
+        fm = QFontMetrics(self._FONT)
+        label_w = fm.horizontalAdvance("100%")
+        bar_w = W - label_w - self._TEXT_GAP
 
-        history   = list(self._history)
-        n_filled  = len(history)
+        history = list(self._history)
+        n_filled = len(history)
 
-        slot   = (bar_w - _CELL_GAP) / _N_CELLS
+        slot = (bar_w - _CELL_GAP) / _N_CELLS
         cell_w = slot - _CELL_GAP
 
         for i, pct in enumerate(history):
             x0 = round(i * slot)
             x1 = round(x0 + cell_w)
-            painter.fillRect(x0, pad_v, max(1, x1 - x0), bar_h,
-                             _health_to_qcolor(pct))
+            painter.fillRect(x0, pad_v, max(1, x1 - x0), bar_h, _health_to_qcolor(pct))
 
         now_x = round((n_filled - 1) * slot + cell_w)
         painter.setPen(_COLOR_NOW_LINE)
@@ -90,8 +96,14 @@ class HealthBarWidget(QWidget):
         painter.setFont(self._FONT)
         painter.setPen(_health_to_qcolor(self._current_pct))
         text_x = bar_w + self._TEXT_GAP
-        painter.drawText(text_x, 0, label_w, H, Qt.AlignVCenter | Qt.AlignRight,
-                         f"{self._current_pct}%")
+        painter.drawText(
+            text_x,
+            0,
+            label_w,
+            H,
+            Qt.AlignVCenter | Qt.AlignRight,
+            f"{self._current_pct}%",
+        )
 
         painter.end()
 
@@ -125,7 +137,6 @@ def _health_color(pct_str: str) -> str:
 
 
 class HealthPanel(QFrame):
-
     component_failed = pyqtSignal(str)  # emits component name when health first hits 0
 
     def __init__(self):
@@ -161,7 +172,7 @@ class HealthPanel(QFrame):
         self._name_labels: list[QLabel] = []
 
         for row, (name, pct) in enumerate(self._ROWS, 1):
-            color  = _health_color(pct)
+            color = _health_color(pct)
             status = _pct_to_status(pct)
 
             name_lbl = QLabel(name)
@@ -212,13 +223,13 @@ class HealthPanel(QFrame):
 
     def update(
         self,
-        temperature:             float,
-        humidity:                float,
-        operational_load:        float,
-        powder_quality:          float = 1.0,
+        temperature: float,
+        humidity: float,
+        operational_load: float,
+        powder_quality: float = 1.0,
         binder_viscosity_stress: float = 0.0,
-        voltage_stress:          float = 0.0,
-        maintenance_level:       float = 1.0,
+        voltage_stress: float = 0.0,
+        maintenance_level: float = 1.0,
     ) -> None:
         """Advance the degradation engine one day and refresh all labels."""
         self._day += 1
@@ -235,7 +246,7 @@ class HealthPanel(QFrame):
         self._ROWS = [(c.name, c.pct_str) for c in components]
 
         for i, (name, pct) in enumerate(self._ROWS):
-            color  = _health_color(pct)
+            color = _health_color(pct)
             status = _pct_to_status(pct)
 
             self._status_labels[i].setText(status)
